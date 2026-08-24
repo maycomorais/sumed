@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Admin — SUMED 2026</title>
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#111415">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <div class="topbar">
+    <div class="topbar-left">
+      <div class="topbar-logo"><img src="/icons/icon-192.png" onerror="this.style.display='none'" alt=""></div>
+      <div>
+        <span class="topbar-title" style="font-size:0.95rem;">Painel de Gestão</span>
+        <div id="user-badge" style="font-size:0.68rem; color:var(--text-muted);"></div>
+      </div>
+    </div>
+    <div style="display:flex; gap:14px; align-items:center;">
+      <a href="index.html" class="topbar-icon" style="text-decoration:none;" title="Voltar ao app público">🏠</a>
+      <button class="topbar-icon" onclick="logout()" title="Sair">⎋</button>
+    </div>
+  </div>
+
+  <div class="container">
+    <div class="pill-toggle" id="admin-categoria-toggle"></div>
+  </div>
+
+  <div class="container" style="padding-top:0;">
+
+    <!-- SORTEIO -->
+    <section id="screen-sorteio" class="screen active">
+      <p class="section-label">Sorteio & Rodadas</p>
+      <p class="section-sub">Geração automática do calendário — todos contra todos.</p>
+
+      <div class="card card-accent">
+        <div class="card-title">Gerador Automático (Round-Robin)</div>
+        <p style="color:var(--text-muted); font-size:0.85rem; margin-bottom:15px;">
+          Gera as 13 rodadas com folga automática, sem repetir a equipe que folga. Afeta somente a categoria selecionada acima.
+        </p>
+        <button class="btn-action" id="btn-gerar-sorteio" onclick="generateDraw()" style="width:100%;">🎲 Gerar Novo Sorteio</button>
+        <p id="sorteio-restrito-msg" style="display:none; color:var(--text-muted); font-size:0.8rem; margin-top:10px;">
+          Apenas AdminMaster ou Presidente podem gerar um novo sorteio.
+        </p>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Equipes na categoria</div>
+        <div id="admin-teams-summary"></div>
+      </div>
+    </section>
+
+    <!-- PLACAR (lançar resultado + editar data/hora/local, unificado) -->
+    <section id="screen-placar" class="screen">
+      <p class="section-label">Lançar Placar</p>
+      <p class="section-sub">Resultado, data, horário e local — tudo em um só lugar.</p>
+
+      <div class="round-selector">
+        <button class="round-btn" onclick="changeAdminRound(-1)">❮</button>
+        <span id="admin-round-title" style="font-weight:800; color:var(--gold-bright);">Rodada 1</span>
+        <button class="round-btn" onclick="changeAdminRound(1)">❯</button>
+      </div>
+
+      <div id="admin-matches-list"></div>
+    </section>
+
+    <!-- EQUIPES -->
+    <section id="screen-equipes" class="screen">
+      <p class="section-label">Equipes</p>
+
+      <div class="card" id="card-nova-equipe">
+        <div class="card-title">Nova Equipe <span id="nova-equipe-categoria-label" style="color:var(--text-muted); font-weight:400; font-size:0.75rem;"></span></div>
+        <form id="form-team" onsubmit="saveTeam(event)">
+          <div class="form-group">
+            <label>Nome da Equipe</label>
+            <input type="text" id="team-name" class="form-control" required>
+          </div>
+          <div class="form-group">
+            <label>Escudo</label>
+            <div class="upload-field">
+              <img id="escudo-preview" class="upload-preview" src="" style="display:none;">
+              <input type="file" id="team-escudo" accept="image/*" class="form-control" onchange="previewImage('team-escudo','escudo-preview')">
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Presidente</label>
+            <input type="text" id="team-president" class="form-control">
+          </div>
+          <div class="form-group">
+            <label>Capitão</label>
+            <input type="text" id="team-captain" class="form-control">
+          </div>
+          <div class="form-group">
+            <label>Comissão Técnica</label>
+            <input type="text" id="team-staff" class="form-control">
+          </div>
+          <div class="form-group">
+            <label>Diretor de Marketing</label>
+            <input type="text" id="team-marketing" class="form-control">
+          </div>
+
+          <div class="form-group">
+            <label>Jogadores</label>
+            <div id="jogadores-list"></div>
+            <button type="button" class="btn-secondary" onclick="addJogadorRow()">+ Adicionar Jogador</button>
+          </div>
+
+          <button type="submit" class="btn-action" id="btn-salvar-equipe" style="margin-top:10px; width:100%;">Salvar Equipe</button>
+        </form>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Equipes Cadastradas</div>
+        <div id="admin-teams-list"></div>
+      </div>
+    </section>
+
+    <!-- DISCIPLINA -->
+    <section id="screen-disciplina" class="screen">
+      <p class="section-label">Disciplina</p>
+      <p class="section-sub">Cartões, contusões, punições e suspensões (registro manual).</p>
+
+      <div class="card">
+        <form id="form-evento" onsubmit="saveEvento(event)">
+          <div class="form-group">
+            <label>Equipe</label>
+            <select id="evento-equipe" class="form-control" onchange="populateJogadoresDoEvento()" required></select>
+          </div>
+          <div class="form-group">
+            <label>Jogador</label>
+            <select id="evento-jogador" class="form-control" required></select>
+          </div>
+          <div class="form-group">
+            <label>Tipo</label>
+            <select id="evento-tipo" class="form-control" onchange="toggleSuspensaoField()">
+              <option value="cartao_amarelo">🟨 Cartão Amarelo</option>
+              <option value="cartao_vermelho">🟥 Cartão Vermelho</option>
+              <option value="contusao">🩹 Contusão</option>
+              <option value="punicao">⚠️ Punição</option>
+              <option value="suspensao">⛔ Suspensão</option>
+              <option value="outro">📌 Outro</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Partida relacionada (opcional)</label>
+            <select id="evento-partida" class="form-control">
+              <option value="">— Não vinculada a uma partida —</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Minuto (opcional)</label>
+            <input type="number" id="evento-minuto" class="form-control" min="0" max="120">
+          </div>
+          <div class="form-group" id="grupo-rodada-suspensao" style="display:none;">
+            <label>Suspenso cumpre na rodada nº</label>
+            <input type="number" id="evento-rodada-suspensao" class="form-control" min="1" max="13">
+          </div>
+          <div class="form-group">
+            <label>Observação</label>
+            <textarea id="evento-descricao" class="form-control" rows="2"></textarea>
+          </div>
+          <button type="submit" class="btn-action" style="width:100%;">Registrar</button>
+        </form>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Histórico de Ocorrências</div>
+        <div id="admin-eventos-list"></div>
+      </div>
+    </section>
+
+    <!-- MAIS -->
+    <section id="screen-mais" class="screen">
+      <p class="section-label">Mais</p>
+
+      <div class="menu-list-item" onclick="switchAdminScreen('patrocinadores')">
+        <div class="quick-icon">💰</div>
+        <div class="quick-body"><div class="quick-title">Patrocinadores</div></div>
+        <div class="quick-arrow">↗</div>
+      </div>
+      <div class="menu-list-item" id="menu-usuarios" style="display:none;" onclick="switchAdminScreen('usuarios')">
+        <div class="quick-icon">👤</div>
+        <div class="quick-body"><div class="quick-title">Usuários</div></div>
+        <div class="quick-arrow">↗</div>
+      </div>
+      <div class="menu-list-item" onclick="window.location.href='index.html'">
+        <div class="quick-icon">🌐</div>
+        <div class="quick-body"><div class="quick-title">Aplicativo Público</div></div>
+        <div class="quick-arrow">↗</div>
+      </div>
+      <div class="menu-list-item" onclick="logout()">
+        <div class="quick-icon">⎋</div>
+        <div class="quick-body"><div class="quick-title">Sair</div></div>
+      </div>
+    </section>
+
+    <!-- PATROCINADORES -->
+    <section id="screen-patrocinadores" class="screen">
+      <div style="display:flex; align-items:center; gap:10px; margin-bottom:14px;">
+        <button class="topbar-back" onclick="switchAdminScreen('mais')">←</button>
+        <span class="section-label" style="margin:0;">Patrocinadores</span>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Novo Patrocinador</div>
+        <form id="form-sponsor" onsubmit="saveSponsor(event)">
+          <div class="form-group">
+            <label>Nome</label>
+            <input type="text" id="sponsor-name" class="form-control" required>
+          </div>
+          <div class="form-group">
+            <label>Logo</label>
+            <div class="upload-field">
+              <img id="sponsor-preview" class="upload-preview" src="" style="display:none;">
+              <input type="file" id="sponsor-logo" accept="image/*" class="form-control" required onchange="previewImage('sponsor-logo','sponsor-preview')">
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Link (Instagram, site, rede social)</label>
+            <input type="url" id="sponsor-link" class="form-control" placeholder="https://instagram.com/seu_patrocinador">
+          </div>
+          <div class="form-group">
+            <label>Ordem de exibição</label>
+            <input type="number" id="sponsor-order" class="form-control" value="0">
+          </div>
+          <button type="submit" class="btn-action" style="width:100%;">Salvar Patrocinador</button>
+        </form>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Patrocinadores Cadastrados</div>
+        <div id="admin-sponsors-list"></div>
+      </div>
+    </section>
+
+    <!-- USUÁRIOS (só AdminMaster) -->
+    <section id="screen-usuarios" class="screen">
+      <div style="display:flex; align-items:center; gap:10px; margin-bottom:14px;">
+        <button class="topbar-back" onclick="switchAdminScreen('mais')">←</button>
+        <span class="section-label" style="margin:0;">Usuários</span>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Novo Usuário</div>
+        <form id="form-user" onsubmit="saveUser(event)">
+          <div class="form-group">
+            <label>Nome</label>
+            <input type="text" id="user-name" class="form-control" required>
+          </div>
+          <div class="form-group">
+            <label>E-mail</label>
+            <input type="email" id="user-email" class="form-control" required>
+          </div>
+          <div class="form-group">
+            <label>Senha provisória</label>
+            <input type="password" id="user-password" class="form-control" required minlength="6">
+          </div>
+          <div class="form-group">
+            <label>Papel</label>
+            <select id="user-role" class="form-control">
+              <option value="diretor">Diretor</option>
+              <option value="presidente">Presidente</option>
+              <option value="admin_master">AdminMaster</option>
+            </select>
+          </div>
+          <button type="submit" class="btn-action" style="width:100%;">Criar Usuário</button>
+        </form>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Usuários Cadastrados</div>
+        <div id="admin-users-list"></div>
+      </div>
+    </section>
+
+  </div>
+
+  <nav class="bottom-nav">
+    <button class="bottom-nav-item active" data-screen="sorteio" onclick="switchAdminScreen('sorteio')">
+      <span class="icon">🎲</span><span>Sorteio</span>
+    </button>
+    <button class="bottom-nav-item" data-screen="placar" onclick="switchAdminScreen('placar')">
+      <span class="icon">⚽</span><span>Placar</span>
+    </button>
+    <button class="bottom-nav-item" data-screen="equipes" onclick="switchAdminScreen('equipes')">
+      <span class="icon">🛡️</span><span>Equipes</span>
+    </button>
+    <button class="bottom-nav-item" data-screen="disciplina" onclick="switchAdminScreen('disciplina')">
+      <span class="icon">🟨</span><span>Disciplina</span>
+    </button>
+    <button class="bottom-nav-item" data-screen="mais" onclick="switchAdminScreen('mais')">
+      <span class="icon">⋯</span><span>Mais</span>
+    </button>
+  </nav>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="supabaseClient.js"></script>
+  <script src="data.js"></script>
+  <script src="admin.js"></script>
+</body>
+</html>

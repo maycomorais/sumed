@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>SUMED 2026 — Superliga Universitária de Medicina</title>
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#111415">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="SUMED 2026">
+  <link rel="apple-touch-icon" href="/icons/icon-192.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <div class="topbar">
+    <div class="topbar-left">
+      <div class="topbar-logo"><img src="/icons/icon-192.png" onerror="this.style.display='none'" alt=""></div>
+      <span class="topbar-title">SUMED 2026</span>
+    </div>
+    <div style="display:flex; gap:14px; align-items:center;">
+      <button class="topbar-icon" onclick="openRegulamento()" title="Regulamento">☰</button>
+      <a href="admin.html" class="topbar-icon" style="text-decoration:none;" title="Painel Admin">⚙️</a>
+    </div>
+  </div>
+
+  <div class="container">
+
+    <!-- HOME -->
+    <section id="screen-home" class="screen active">
+      <div class="pill-toggle" data-categoria-toggle></div>
+
+      <p class="section-sub" style="margin-top:8px;">Próxima Rodada</p>
+      <div class="card card-accent hero-card" id="hero-next-match"></div>
+
+      <div class="card quick-card" onclick="switchScreen('tabela')">
+        <div class="quick-icon">📊</div>
+        <div class="quick-body">
+          <div class="quick-title">Tabela Completa</div>
+          <div class="quick-sub">Classificação atualizada em tempo real.</div>
+        </div>
+        <div class="quick-arrow">↗</div>
+      </div>
+
+      <div class="card quick-card" onclick="switchScreen('rodadas')">
+        <div class="quick-icon">📅</div>
+        <div class="quick-body">
+          <div class="quick-title">Rodadas & Jogos</div>
+          <div class="quick-sub">Veja o calendário completo da fase classificatória.</div>
+        </div>
+        <div class="quick-arrow">↗</div>
+      </div>
+
+      <div class="sponsors-block" id="sponsors-block"></div>
+    </section>
+
+    <!-- RODADAS (acessado via Home) -->
+    <section id="screen-rodadas" class="screen">
+      <div style="display:flex; align-items:center; gap:10px; margin-bottom:14px;">
+        <button class="topbar-back" onclick="switchScreen('home')">←</button>
+        <span class="section-label" style="margin:0;">Rodadas & Jogos</span>
+      </div>
+      <div class="pill-toggle" data-categoria-toggle></div>
+      <div class="round-selector">
+        <button class="round-btn" onclick="changeRound(-1)">❮</button>
+        <span id="current-round-title" style="font-weight:800; color:var(--gold-bright);">Rodada 1</span>
+        <button class="round-btn" onclick="changeRound(1)">❯</button>
+      </div>
+      <div id="matches-container"></div>
+      <div id="bye-container"></div>
+    </section>
+
+    <!-- TABELA -->
+    <section id="screen-tabela" class="screen">
+      <p class="section-label">Classificação Geral</p>
+      <p class="section-sub">Temporada Regular — Superliga Universitária de Medicina</p>
+      <div class="pill-toggle" data-categoria-toggle></div>
+      <div class="standings-wrap">
+        <table class="standings">
+          <thead>
+            <tr>
+              <th>Pos</th>
+              <th style="text-align:left;">Equipe</th>
+              <th>P</th>
+              <th>J</th>
+              <th>V</th>
+              <th>SG</th>
+            </tr>
+          </thead>
+          <tbody id="table-standings"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- CHAVES -->
+    <section id="screen-chaves" class="screen">
+      <p class="section-label">Acompanhe a fase final do torneio.</p>
+      <p class="section-sub">Caminho para a glória.</p>
+      <div class="pill-toggle" data-categoria-toggle></div>
+      <div class="pill-toggle">
+        <button class="pill-btn active" data-fase="ouro" onclick="setFase('ouro')">🏆 SUMED Ouro</button>
+        <button class="pill-btn" data-fase="prata" onclick="setFase('prata')">🥈 SUMED Prata</button>
+      </div>
+      <div id="fase-ouro-content">
+        <div class="bracket-stage-label">Quartas</div>
+        <div id="qf-matches"></div>
+        <div class="bracket-stage-label">Semi</div>
+        <div id="sf-matches"></div>
+        <div class="bracket-trophy">🏆</div>
+      </div>
+      <div id="fase-prata-content" style="display:none;">
+        <div id="prata-container"></div>
+      </div>
+    </section>
+
+    <!-- EQUIPES -->
+    <section id="screen-equipes" class="screen">
+      <p class="section-label">Equipes</p>
+      <div class="pill-toggle" data-categoria-toggle></div>
+      <div class="teams-grid" id="teams-grid"></div>
+    </section>
+
+    <!-- PERFIL DA EQUIPE -->
+    <section id="screen-team-profile" class="screen">
+      <div style="display:flex; align-items:center; gap:10px; margin-bottom:14px;">
+        <button class="topbar-back" onclick="switchScreen('equipes')">←</button>
+        <span class="section-label" style="margin:0;">Equipe</span>
+      </div>
+      <div id="team-profile-content"></div>
+    </section>
+
+  </div>
+
+  <nav class="bottom-nav">
+    <button class="bottom-nav-item active" data-screen="home" onclick="switchScreen('home')">
+      <span class="icon">🏠</span><span>Home</span>
+    </button>
+    <button class="bottom-nav-item" data-screen="tabela" onclick="switchScreen('tabela')">
+      <span class="icon">📊</span><span>Tabela</span>
+    </button>
+    <button class="bottom-nav-item" data-screen="chaves" onclick="switchScreen('chaves')">
+      <span class="icon">🏆</span><span>Chaves</span>
+    </button>
+    <button class="bottom-nav-item" data-screen="equipes" onclick="switchScreen('equipes')">
+      <span class="icon">👥</span><span>Equipes</span>
+    </button>
+  </nav>
+
+  <!-- MODAL SÚMULA / REGULAMENTO -->
+  <div id="app-modal" class="modal">
+    <div class="modal-content">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+        <h3 id="modal-title" style="color:var(--gold-bright);">Detalhes</h3>
+        <button onclick="closeModal()" style="background:none; border:none; color:#fff; font-size:1.5rem; cursor:pointer;">&times;</button>
+      </div>
+      <div id="modal-body"></div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="supabaseClient.js"></script>
+  <script src="data.js"></script>
+  <script src="index.js"></script>
+</body>
+</html>

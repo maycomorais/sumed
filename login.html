@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Login — SUMED 2026</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    :root {
+      --bg: #111415;
+      --surface: #191c1d;
+      --surface-high: #282a2b;
+      --border: #43474e;
+      --gold: #e9c349;
+      --gold-bright: #ffd700;
+      --text: #e1e3e4;
+      --text-muted: #94a3b8;
+      --error: #ffb4ab;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, sans-serif; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .login-card {
+      width: 100%;
+      max-width: 360px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 32px 24px;
+    }
+    .brand { text-align: center; margin-bottom: 28px; }
+    .logo-placeholder {
+      width: 56px; height: 56px; margin: 0 auto 14px;
+      background: var(--gold); color: var(--bg);
+      border-radius: 50%; display: flex; align-items: center; justify-content: center;
+      font-weight: 800; font-size: 1rem;
+    }
+    .brand h1 { font-size: 1.3rem; letter-spacing: 0.5px; }
+    .brand p { color: var(--text-muted); font-size: 0.8rem; margin-top: 4px; }
+    .form-group { margin-bottom: 16px; }
+    label {
+      display: block; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em;
+      color: var(--text-muted); margin-bottom: 6px;
+    }
+    input {
+      width: 100%; padding: 12px; background: var(--bg); border: 1px solid var(--border);
+      color: var(--text); border-radius: 6px; font-size: 0.95rem; transition: border-color 0.15s;
+    }
+    input:focus { outline: none; border-color: var(--gold); }
+    .btn-login {
+      width: 100%; padding: 13px; background: var(--gold); color: var(--bg);
+      border: none; border-radius: 6px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.05em; font-size: 0.85rem; cursor: pointer; margin-top: 8px;
+    }
+    .btn-login:hover { background: var(--gold-bright); }
+    .btn-login:disabled { opacity: 0.6; cursor: not-allowed; }
+    .error-msg {
+      background: rgba(255, 180, 171, 0.1); border: 1px solid var(--error);
+      color: var(--error); font-size: 0.82rem; padding: 10px 12px; border-radius: 6px;
+      margin-bottom: 16px; display: none;
+    }
+    .error-msg.show { display: block; }
+    .back-link {
+      display: block; text-align: center; margin-top: 20px; color: var(--text-muted);
+      font-size: 0.8rem; text-decoration: none;
+    }
+    .back-link:hover { color: var(--gold); }
+  </style>
+</head>
+<body>
+
+  <div class="login-card">
+    <div class="brand">
+      <div class="logo-placeholder">SUMED</div>
+      <h1>PAINEL ADMINISTRATIVO</h1>
+      <p>Acesso restrito à organização</p>
+    </div>
+
+    <div id="error-box" class="error-msg"></div>
+
+    <form id="login-form">
+      <div class="form-group">
+        <label for="email">E-mail</label>
+        <input type="email" id="email" required autocomplete="username">
+      </div>
+      <div class="form-group">
+        <label for="senha">Senha</label>
+        <input type="password" id="senha" required autocomplete="current-password">
+      </div>
+      <button type="submit" class="btn-login" id="btn-submit">Entrar</button>
+    </form>
+
+    <a href="index.html" class="back-link">← Voltar ao aplicativo público</a>
+  </div>
+
+  <script src="supabaseClient.js"></script>
+  <script src="login.js"></script>
+</body>
+</html>
