@@ -30,7 +30,7 @@ const ROLE_LABELS = {
 // ---------------------------------------------------------------------
 const ADMIN_NAV_MAP = {
   sorteio: 'sorteio', placar: 'placar', equipes: 'equipes', disciplina: 'disciplina',
-  mais: 'mais', patrocinadores: 'mais', usuarios: 'mais', formato: 'mais',
+  mais: 'mais', patrocinadores: 'mais', usuarios: 'mais', formato: 'mais', identidade: 'mais',
   'sumula-admin': 'placar',
 };
 
@@ -51,6 +51,7 @@ function switchAdminScreen(screenId) {
   if (screenId === 'usuarios') renderAdminUsersList();
   if (screenId === 'disciplina') initDisciplinaTab();
   if (screenId === 'formato') initFormatoTab();
+  if (screenId === 'identidade') initIdentidadeTab();
 
   window.scrollTo(0, 0);
 }
@@ -1068,6 +1069,51 @@ async function salvarEscalacaoCompleta() {
     await renderEscalacaoTimes(tA, tB);
   } catch (e) {
     alert('Erro ao salvar escalação: ' + e.message);
+  }
+}
+
+const IDENTIDADE_PADRAO = { logo_torneio: null, patrocinador_master_logo: null, patrocinador_master_link: null };
+
+async function initIdentidadeTab() {
+  try {
+    const cfg = await fetchConfig('identidade_visual', IDENTIDADE_PADRAO);
+    if (cfg.logo_torneio) {
+      document.getElementById('identidade-logo-preview').src = cfg.logo_torneio;
+      document.getElementById('identidade-logo-preview').style.display = 'block';
+    }
+    if (cfg.patrocinador_master_logo) {
+      document.getElementById('identidade-master-preview').src = cfg.patrocinador_master_logo;
+      document.getElementById('identidade-master-preview').style.display = 'block';
+    }
+    document.getElementById('identidade-master-link').value = cfg.patrocinador_master_link || '';
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+async function saveIdentidadeVisual() {
+  const btn = event.target;
+  btn.disabled = true;
+  btn.textContent = 'Salvando...';
+
+  try {
+    const atual = await fetchConfig('identidade_visual', IDENTIDADE_PADRAO);
+    const logoFile = document.getElementById('identidade-logo-torneio').files[0];
+    const masterFile = document.getElementById('identidade-logo-master').files[0];
+
+    const novo = {
+      logo_torneio: logoFile ? await uploadImageToImgbb(logoFile) : atual.logo_torneio,
+      patrocinador_master_logo: masterFile ? await uploadImageToImgbb(masterFile) : atual.patrocinador_master_logo,
+      patrocinador_master_link: document.getElementById('identidade-master-link').value || null,
+    };
+
+    await saveConfig('identidade_visual', novo);
+    alert('Identidade visual salva! Pode levar alguns segundos pra refletir no app público.');
+  } catch (e) {
+    alert('Erro ao salvar: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Salvar Identidade Visual';
   }
 }
 

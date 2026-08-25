@@ -1,4 +1,4 @@
-const CACHE_NAME = 'sumed2026-v3'; // ⚠️ Sempre incremente esta versão a cada deploy em produção.
+const CACHE_NAME = 'sumed2026-v4'; // ⚠️ Sempre incremente esta versão a cada deploy em produção.
 // Trocar o nome força o navegador a descartar tudo que estava em cache
 // (veja o listener 'activate' abaixo) em vez de continuar servindo
 // arquivos antigos indefinidamente.

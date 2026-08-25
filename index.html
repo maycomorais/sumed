@@ -16,10 +16,11 @@
 
   <div class="topbar">
     <div class="topbar-left">
-      <div class="topbar-logo"><img src="/icons/icon-192.png" onerror="this.style.display='none'" alt=""></div>
+      <div class="topbar-logo" id="topbar-logo-torneio"><img src="/icons/icon-192.png" onerror="this.style.display='none'" alt=""></div>
       <span class="topbar-title">SUMED 2026</span>
     </div>
-    <div style="display:flex; gap:14px; align-items:center;">
+    <div style="display:flex; gap:10px; align-items:center;">
+      <div class="topbar-logo" id="topbar-logo-master" style="display:none;"></div>
       <button class="topbar-icon" onclick="openRegulamento()" title="Regulamento">☰</button>
       <a href="admin.html" class="topbar-icon" style="text-decoration:none;" title="Painel Admin">⚙️</a>
     </div>
@@ -150,6 +151,17 @@
       <div id="team-profile-content"></div>
     </section>
 
+  </div>
+
+  <!-- BANNER DE INSTALAÇÃO DO APP -->
+  <div id="install-banner" class="install-banner" style="display:none;">
+    <div class="install-banner-icon">📲</div>
+    <div class="install-banner-body">
+      <div class="install-banner-title">Instale o app SUMED 2026</div>
+      <div class="install-banner-sub" id="install-banner-sub">Acesso rápido, tela cheia, funciona melhor offline.</div>
+    </div>
+    <button class="btn-action install-banner-cta" id="install-banner-btn">Instalar</button>
+    <button class="install-banner-close" onclick="dismissInstallBanner()">✕</button>
   </div>
 
   <!-- CARD FLUTUANTE DE PLACAR AO VIVO -->

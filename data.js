@@ -509,3 +509,13 @@ function subscribeToMatch(matchId, onUpdate) {
     .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'partidas', filter: `id=eq.${matchId}` }, (payload) => onUpdate(payload.new))
     .subscribe();
 }
+
+// Assina INSERTs de gols e eventos disciplinares de UMA partida — usado
+// pelas animações do widget ao vivo (bola subindo, cartão subindo etc.)
+function subscribeToMatchEvents(matchId, { onGol, onCartao } = {}) {
+  return sb
+    .channel(`eventos-${matchId}`)
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'gols', filter: `partida_id=eq.${matchId}` }, (payload) => onGol && onGol(payload.new))
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'eventos_disciplinares', filter: `partida_id=eq.${matchId}` }, (payload) => onCartao && onCartao(payload.new))
+    .subscribe();
+}

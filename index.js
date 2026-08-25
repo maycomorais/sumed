@@ -31,6 +31,135 @@ let state = {
 };
 
 // ---------------------------------------------------------------------
+// BANNER DE INSTALAÇÃO DO APP
+// ---------------------------------------------------------------------
+let deferredInstallPrompt = null;
+
+function isStandalone() {
+  return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+}
+
+function isIOS() {
+  return /iphone|ipad|ipod/i.test(navigator.userAgent);
+}
+
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredInstallPrompt = e;
+  maybeShowInstallBanner();
+});
+
+window.addEventListener('appinstalled', dismissInstallBanner);
+
+function maybeShowInstallBanner() {
+  if (isStandalone()) return;
+  if (localStorage.getItem('sumed_install_dismissed') === '1') return;
+
+  const banner = document.getElementById('install-banner');
+  if (!banner) return;
+
+  if (isIOS()) {
+    document.getElementById('install-banner-sub').textContent = 'Toque em Compartilhar e depois "Adicionar à Tela de Início".';
+    const btn = document.getElementById('install-banner-btn');
+    btn.textContent = 'Como instalar';
+    btn.onclick = showIOSInstallInstructions;
+    banner.style.display = 'flex';
+  } else if (deferredInstallPrompt) {
+    const btn = document.getElementById('install-banner-btn');
+    btn.textContent = 'Instalar';
+    btn.onclick = triggerInstallPrompt;
+    banner.style.display = 'flex';
+  }
+}
+
+async function triggerInstallPrompt() {
+  if (!deferredInstallPrompt) return;
+  deferredInstallPrompt.prompt();
+  await deferredInstallPrompt.userChoice;
+  deferredInstallPrompt = null;
+  dismissInstallBanner();
+}
+
+function showIOSInstallInstructions() {
+  document.getElementById('modal-title').innerText = 'Instalar no iPhone';
+  document.getElementById('modal-body').innerHTML = `
+    <p style="line-height:1.8; font-size:0.95rem;">
+      1. Toque no ícone de <b>Compartilhar</b> (o quadrado com uma seta pra cima) na barra do Safari.<br><br>
+      2. Role a lista de opções e toque em <b>"Adicionar à Tela de Início"</b>.<br><br>
+      3. Toque em <b>Adicionar</b>, no canto superior direito.
+    </p>
+  `;
+  document.getElementById('app-modal').classList.add('active');
+}
+
+function dismissInstallBanner() {
+  localStorage.setItem('sumed_install_dismissed', '1');
+  const banner = document.getElementById('install-banner');
+  if (banner) banner.style.display = 'none';
+}
+
+// ---------------------------------------------------------------------
+// IDENTIDADE VISUAL (logo do torneio + patrocinador master)
+// ---------------------------------------------------------------------
+const IDENTIDADE_PADRAO = { logo_torneio: null, patrocinador_master_logo: null, patrocinador_master_link: null };
+
+async function loadIdentidadeVisual() {
+  try {
+    const cfg = await fetchConfig('identidade_visual', IDENTIDADE_PADRAO);
+    aplicarLogosCabecalho(cfg);
+    aplicarIconeDoApp(cfg.logo_torneio);
+  } catch (e) {
+    console.error('Erro ao carregar identidade visual:', e);
+  }
+}
+
+function aplicarLogosCabecalho(cfg) {
+  if (cfg.logo_torneio) {
+    document.getElementById('topbar-logo-torneio').innerHTML = `<img src="${cfg.logo_torneio}" alt="Logo do torneio">`;
+  }
+  const masterEl = document.getElementById('topbar-logo-master');
+  if (cfg.patrocinador_master_logo) {
+    const conteudo = `<img src="${cfg.patrocinador_master_logo}" alt="Patrocinador Master">`;
+    masterEl.innerHTML = cfg.patrocinador_master_link
+      ? `<a href="${cfg.patrocinador_master_link}" target="_blank" rel="noopener" style="display:block; width:100%; height:100%;">${conteudo}</a>`
+      : conteudo;
+    masterEl.style.display = 'flex';
+  }
+}
+
+// Troca o ícone que o navegador usa ao "Adicionar à Tela de Início" —
+// tanto no Android (via manifest dinâmico) quanto no iPhone (via
+// apple-touch-icon). Precisa rodar cedo, antes do usuário instalar.
+function aplicarIconeDoApp(logoUrl) {
+  if (!logoUrl) return;
+
+  const appleTouchIcon = document.querySelector('link[rel="apple-touch-icon"]');
+  if (appleTouchIcon) appleTouchIcon.href = logoUrl;
+
+  const manifestBase = {
+    name: 'SUMED 2026 — Superliga Universitária de Medicina',
+    short_name: 'SUMED 2026',
+    description: 'Acompanhe a Superliga Universitária de Medicina 2026: tabela, jogos, mata-mata e equipes.',
+    start_url: '/index.html',
+    scope: '/',
+    display: 'standalone',
+    orientation: 'portrait',
+    background_color: '#111415',
+    theme_color: '#111415',
+    icons: [
+      { src: logoUrl, sizes: '192x192', type: 'image/png', purpose: 'any' },
+      { src: logoUrl, sizes: '512x512', type: 'image/png', purpose: 'any' },
+      { src: logoUrl, sizes: '192x192', type: 'image/png', purpose: 'maskable' },
+      { src: logoUrl, sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+    ],
+  };
+
+  const blob = new Blob([JSON.stringify(manifestBase)], { type: 'application/json' });
+  const manifestLink = document.querySelector('link[rel="manifest"]');
+  if (manifestLink) manifestLink.href = URL.createObjectURL(blob);
+}
+
+// ---------------------------------------------------------------------
 // NAVEGAÇÃO
 // ---------------------------------------------------------------------
 const NAV_MAP = { home: 'home', rodadas: 'home', tabela: 'tabela', chaves: 'chaves', equipes: 'equipes', 'team-profile': 'equipes' };
@@ -65,6 +194,7 @@ async function setCategoria(categoria) {
   state._escalacoesCache = null;
   liveDismissed = false;
   if (liveChannel) { sb.removeChannel(liveChannel); liveChannel = null; }
+  if (liveEventsChannel) { sb.removeChannel(liveEventsChannel); liveEventsChannel = null; }
   renderCategoriaToggles();
   await loadData();
   renderAll();
@@ -455,28 +585,56 @@ async function openTeamProfile(teamId) {
 }
 
 // ---------------------------------------------------------------------
-// CARD FLUTUANTE — PLACAR AO VIVO
+// CARD FLUTUANTE — PLACAR AO VIVO (com Picture-in-Picture e animações)
 // ---------------------------------------------------------------------
 let liveChannel = null;
+let liveEventsChannel = null;
 let livePollInterval = null;
 let liveDismissed = false;
+let liveWidgetEl = null; // referência fixa — não usar getElementById depois de mover pro PiP
+let pipWindow = null;
+
+function getLiveWidgetEl() {
+  if (!liveWidgetEl) liveWidgetEl = document.getElementById('live-widget');
+  return liveWidgetEl;
+}
+
+const PIP_SUPORTADO = typeof window !== 'undefined' && 'documentPictureInPicture' in window;
 
 function renderLiveWidget(m, teamA, teamB) {
-  const el = document.getElementById('live-widget');
+  const el = getLiveWidgetEl();
   el.innerHTML = `
     <button class="live-widget-close" onclick="dismissLiveWidget()">✕</button>
     <div class="hero-live-tag"><span class="dot"></span> Ao Vivo</div>
     <div class="live-widget-teams"><span>${teamA?.nome || '?'}</span><span>${teamB?.nome || '?'}</span></div>
     <div class="live-widget-score" id="live-widget-score">${m.placar_a ?? 0} × ${m.placar_b ?? 0}</div>
-    ${m.link_transmissao ? `<a href="${m.link_transmissao}" target="_blank" rel="noopener" class="live-widget-link">📡 Assistir Ao Vivo</a>` : ''}
+    <div class="live-widget-actions">
+      ${m.link_transmissao ? `<a href="${m.link_transmissao}" target="_blank" rel="noopener" class="live-widget-link">📡 Assistir</a>` : ''}
+      ${PIP_SUPORTADO ? `<button class="live-widget-pip" onclick="togglePip()">📌 Flutuar</button>` : ''}
+    </div>
   `;
   el.style.display = 'block';
 }
 
 function dismissLiveWidget() {
   liveDismissed = true;
-  document.getElementById('live-widget').style.display = 'none';
+  getLiveWidgetEl().style.display = 'none';
   if (liveChannel) { sb.removeChannel(liveChannel); liveChannel = null; }
+  if (liveEventsChannel) { sb.removeChannel(liveEventsChannel); liveEventsChannel = null; }
+  if (pipWindow) { pipWindow.close(); }
+}
+
+// Bolinha/cartão sobe e desaparece — dispara em cima do widget, esteja
+// ele na página normal ou já flutuando na janela de PiP (mesmo elemento,
+// então funciona nos dois casos sem lógica extra).
+function spawnFloatingIcon(emoji) {
+  if (!emoji) return;
+  const el = getLiveWidgetEl();
+  const span = document.createElement('span');
+  span.className = 'live-float-icon';
+  span.textContent = emoji;
+  el.appendChild(span);
+  setTimeout(() => span.remove(), 1700);
 }
 
 async function checkLiveMatch() {
@@ -484,8 +642,9 @@ async function checkLiveMatch() {
   try {
     const m = await fetchLiveMatch(state.categoria);
     if (!m) {
-      document.getElementById('live-widget').style.display = 'none';
+      getLiveWidgetEl().style.display = 'none';
       if (liveChannel) { sb.removeChannel(liveChannel); liveChannel = null; }
+      if (liveEventsChannel) { sb.removeChannel(liveEventsChannel); liveEventsChannel = null; }
       return;
     }
 
@@ -496,8 +655,17 @@ async function checkLiveMatch() {
     if (!liveChannel) {
       liveChannel = subscribeToMatch(m.id, (updated) => {
         if (updated.status !== 'LIVE') { checkLiveMatch(); return; }
-        const scoreEl = document.getElementById('live-widget-score');
+        const scoreEl = getLiveWidgetEl().querySelector('#live-widget-score');
         if (scoreEl) scoreEl.textContent = `${updated.placar_a ?? 0} × ${updated.placar_b ?? 0}`;
+      });
+    }
+
+    if (!liveEventsChannel) {
+      liveEventsChannel = subscribeToMatchEvents(m.id, {
+        onGol: () => spawnFloatingIcon('⚽'),
+        onCartao: (ev) => spawnFloatingIcon(
+          ev.tipo === 'cartao_amarelo' ? '🟨' : ev.tipo === 'cartao_vermelho' ? '🟥' : null
+        ),
       });
     }
   } catch (e) { console.error('Erro ao checar partida ao vivo:', e); }
@@ -507,6 +675,50 @@ function initLiveWidget() {
   checkLiveMatch();
   if (livePollInterval) clearInterval(livePollInterval);
   livePollInterval = setInterval(checkLiveMatch, 20000); // fallback caso o Realtime falhe
+}
+
+// ---------------------------------------------------------------------
+// PICTURE-IN-PICTURE (Document PiP API — Chrome/Edge desktop e Android)
+// ---------------------------------------------------------------------
+async function togglePip() {
+  if (!PIP_SUPORTADO) {
+    alert('Seu navegador não suporta janela flutuante. Funciona no Chrome/Edge (desktop e Android). Safari/iOS não tem essa API — nesses casos o placar fica na aba mesmo.');
+    return;
+  }
+
+  if (pipWindow) { pipWindow.close(); return; }
+
+  const el = getLiveWidgetEl();
+  pipWindow = await documentPictureInPicture.requestWindow({ width: 240, height: 260 });
+
+  // Copia as folhas de estilo da página pra dentro da janela flutuante
+  // (ela nasce com um documento em branco, sem CSS nenhum).
+  [...document.styleSheets].forEach((styleSheet) => {
+    try {
+      const cssTexto = [...styleSheet.cssRules].map((r) => r.cssText).join('');
+      const style = document.createElement('style');
+      style.textContent = cssTexto;
+      pipWindow.document.head.appendChild(style);
+    } catch (e) {
+      if (styleSheet.href) {
+        const link = document.createElement('link');
+        link.rel = 'stylesheet';
+        link.href = styleSheet.href;
+        pipWindow.document.head.appendChild(link);
+      }
+    }
+  });
+
+  pipWindow.document.body.style.margin = '0';
+  pipWindow.document.body.style.background = '#111415';
+  el.classList.add('in-pip');
+  pipWindow.document.body.appendChild(el);
+
+  pipWindow.addEventListener('pagehide', () => {
+    el.classList.remove('in-pip');
+    document.body.appendChild(el);
+    pipWindow = null;
+  });
 }
 
 // ---------------------------------------------------------------------
@@ -830,6 +1042,7 @@ function renderAll() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
+  loadIdentidadeVisual(); // roda em paralelo, cedo — não bloqueia o resto
   renderCategoriaToggles();
 
   try {
@@ -841,6 +1054,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   renderAll();
   renderSponsors();
   initLiveWidget();
+  setTimeout(maybeShowInstallBanner, 2500); // dá tempo do usuário ver o app antes de pedir instalação
 
   const isLocalDev = ['localhost', '127.0.0.1'].includes(location.hostname);
   if ('serviceWorker' in navigator && !isLocalDev) {
