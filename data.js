@@ -378,47 +378,23 @@ async function removeEscalacaoJogador(partidaId, jogadorId) {
 async function fetchGols(partidaId) {
   const { data, error } = await sb
     .from('gols')
-    .select('*, jogadores(nome), equipes(nome)')
+    .select('*, marcador:jogador_id(nome), assistente:assistencia_jogador_id(nome), equipes(nome)')
     .eq('partida_id', partidaId)
     .order('minuto');
   if (error) throw error;
   return data;
 }
 
-async function createGol({ partida_id, jogador_id, equipe_id, minuto, tipo }) {
+async function createGol({ partida_id, jogador_id, equipe_id, minuto, tipo, assistencia_jogador_id }) {
   const { error } = await sb.from('gols').insert({
     partida_id, jogador_id, equipe_id, minuto: minuto || null, tipo: tipo || 'normal',
+    assistencia_jogador_id: assistencia_jogador_id || null,
   });
   if (error) throw error;
 }
 
 async function deleteGol(id) {
   const { error } = await sb.from('gols').delete().eq('id', id);
-  if (error) throw error;
-}
-
-// ---------------------------------------------------------------------
-// SUBSTITUIÇÕES
-// ---------------------------------------------------------------------
-async function fetchSubstituicoes(partidaId) {
-  const { data, error } = await sb
-    .from('substituicoes')
-    .select('*, saiu:jogador_sai_id(nome), entra:jogador_entra_id(nome), equipes(nome)')
-    .eq('partida_id', partidaId)
-    .order('minuto');
-  if (error) throw error;
-  return data;
-}
-
-async function createSubstituicao({ partida_id, equipe_id, jogador_sai_id, jogador_entra_id, minuto }) {
-  const { error } = await sb.from('substituicoes').insert({
-    partida_id, equipe_id, jogador_sai_id, jogador_entra_id, minuto: minuto || null,
-  });
-  if (error) throw error;
-}
-
-async function deleteSubstituicao(id) {
-  const { error } = await sb.from('substituicoes').delete().eq('id', id);
   if (error) throw error;
 }
 

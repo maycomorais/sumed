@@ -271,7 +271,7 @@ async function renderMatchExtras(matchId) {
     ]);
     const linhas = [];
     if (gols.length) {
-      linhas.push(gols.map(g => `⚽ ${g.jogadores?.nome}${g.minuto ? " " + g.minuto + "'" : ''}${g.tipo === 'prorrogacao' ? ' (PRO)' : ''}`).join(' · '));
+      linhas.push(gols.map(g => `⚽ ${g.marcador?.nome}${g.assistente?.nome ? ` (assist: ${g.assistente.nome})` : ''}${g.minuto ? " " + g.minuto + "'" : ''}${g.tipo === 'prorrogacao' ? ' (PRO)' : ''}`).join(' · '));
     }
     const cartoes = eventos.filter(e => e.tipo === 'cartao_amarelo' || e.tipo === 'cartao_vermelho');
     if (cartoes.length) {
@@ -510,9 +510,9 @@ function initLiveWidget() {
 }
 
 // ---------------------------------------------------------------------
-// SELEÇÃO DA RODADA / PERNAS DE PAU (automático pela nota) + ACUMULADO
+// SELEÇÃO DA RODADA (automático pela nota) + ACUMULADO DO CAMPEONATO
 // ---------------------------------------------------------------------
-function agruparMelhorPiorPorRodada(escalacoes) {
+function agruparMelhorPorRodada(escalacoes) {
   const porRodada = {};
   escalacoes.forEach(e => {
     const rodada = e.partidas?.rodada;
@@ -528,8 +528,7 @@ function agruparMelhorPiorPorRodada(escalacoes) {
       const pos = e.jogadores?.posicao || '—';
       if (!melhorPorPosicao[pos] || Number(e.nota) > Number(melhorPorPosicao[pos].nota)) melhorPorPosicao[pos] = e;
     });
-    const pior = entries.reduce((min, e) => (!min || Number(e.nota) < Number(min.nota)) ? e : min, null);
-    resultado[rodada] = { melhorPorPosicao, pior };
+    resultado[rodada] = melhorPorPosicao;
   });
   return resultado;
 }
@@ -543,22 +542,20 @@ async function getEscalacoesCategoria() {
 
 async function renderSelecaoRodada() {
   const elSelecao = document.getElementById('selecao-rodada');
-  const elPernas = document.getElementById('pernas-pau-rodada');
   if (!elSelecao) return;
   elSelecao.innerHTML = '<p style="color:var(--text-muted); grid-column:1/-1; font-size:0.85rem;">Carregando...</p>';
 
   try {
     const escalacoes = await getEscalacoesCategoria();
-    const agrupado = agruparMelhorPiorPorRodada(escalacoes);
-    const dados = agrupado[state.selectedRound];
+    const agrupado = agruparMelhorPorRodada(escalacoes);
+    const melhorPorPosicao = agrupado[state.selectedRound];
 
-    if (!dados || !Object.keys(dados.melhorPorPosicao).length) {
+    if (!melhorPorPosicao || !Object.keys(melhorPorPosicao).length) {
       elSelecao.innerHTML = '<p style="color:var(--text-muted); grid-column:1/-1; font-size:0.85rem;">Sem notas lançadas nesta rodada ainda.</p>';
-      elPernas.innerHTML = '';
       return;
     }
 
-    elSelecao.innerHTML = Object.entries(dados.melhorPorPosicao).map(([pos, e]) => `
+    elSelecao.innerHTML = Object.entries(melhorPorPosicao).map(([pos, e]) => `
       <div class="team-tile" style="cursor:default;">
         <div class="team-tile-shield" style="border-radius:50%;">${e.jogadores?.foto_url ? `<img src="${e.jogadores.foto_url}">` : '👤'}</div>
         <div class="team-tile-name">${e.jogadores?.nome}</div>
@@ -566,17 +563,6 @@ async function renderSelecaoRodada() {
         <div style="color:var(--gold-bright); font-weight:800;">${Number(e.nota).toFixed(1)}</div>
       </div>
     `).join('');
-
-    elPernas.innerHTML = dados.pior ? `
-      <div class="card" style="display:flex; align-items:center; gap:12px;">
-        <div style="font-size:1.6rem;">🪵</div>
-        <div style="flex:1;">
-          <b>${dados.pior.jogadores?.nome}</b>
-          <p style="font-size:0.8rem; color:var(--text-muted);">${dados.pior.jogadores?.posicao || ''} · ${dados.pior.equipes?.nome || ''}</p>
-        </div>
-        <div style="color:var(--danger-strong); font-weight:800; font-size:1.2rem;">${Number(dados.pior.nota).toFixed(1)}</div>
-      </div>
-    ` : '';
   } catch (e) {
     console.error(e);
     elSelecao.innerHTML = '';
@@ -590,42 +576,31 @@ async function openSelecaoCampeonato() {
 
   try {
     const escalacoes = await getEscalacoesCategoria();
-    const agrupado = agruparMelhorPiorPorRodada(escalacoes);
+    const agrupado = agruparMelhorPorRodada(escalacoes);
 
     const pontosMelhor = {}; // jogadorId -> { jogador, pontos }
-    const pontosPior = {};
 
-    Object.values(agrupado).forEach(({ melhorPorPosicao, pior }) => {
+    Object.values(agrupado).forEach(melhorPorPosicao => {
       Object.values(melhorPorPosicao).forEach(e => {
         const id = e.jogador_id;
         if (!pontosMelhor[id]) pontosMelhor[id] = { nome: e.jogadores?.nome, posicao: e.jogadores?.posicao, equipe: e.equipes?.nome, pontos: 0 };
         pontosMelhor[id].pontos++;
       });
-      if (pior) {
-        const id = pior.jogador_id;
-        if (!pontosPior[id]) pontosPior[id] = { nome: pior.jogadores?.nome, posicao: pior.jogadores?.posicao, equipe: pior.equipes?.nome, pontos: 0 };
-        pontosPior[id].pontos++;
-      }
     });
 
     const rankMelhor = Object.values(pontosMelhor).sort((a, b) => b.pontos - a.pontos).slice(0, 12);
-    const rankPior = Object.values(pontosPior).sort((a, b) => b.pontos - a.pontos).slice(0, 5);
 
-    const linha = (r, cor) => `
+    const linha = (r) => `
       <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-top:1px solid var(--border-soft); font-size:0.85rem;">
         <span><b>${r.nome}</b> <span style="color:var(--text-muted); font-size:0.75rem;">${r.posicao || ''} · ${r.equipe || ''}</span></span>
-        <b style="color:${cor};">${r.pontos}×</b>
+        <b style="color:var(--gold-bright);">${r.pontos}×</b>
       </div>
     `;
 
     document.getElementById('modal-body').innerHTML = `
       <div class="card">
         <div class="card-title">⭐ Mais vezes na Seleção da Rodada</div>
-        ${rankMelhor.map(r => linha(r, 'var(--gold-bright)')).join('') || '<p style="color:var(--text-muted); font-size:0.85rem;">Sem dados ainda.</p>'}
-      </div>
-      <div class="card">
-        <div class="card-title">🪵 Mais vezes Pernas de Pau</div>
-        ${rankPior.map(r => linha(r, 'var(--danger-strong)')).join('') || '<p style="color:var(--text-muted); font-size:0.85rem;">Sem dados ainda.</p>'}
+        ${rankMelhor.map(linha).join('') || '<p style="color:var(--text-muted); font-size:0.85rem;">Sem dados ainda.</p>'}
       </div>
     `;
   } catch (e) {
@@ -652,12 +627,8 @@ async function openSumula(matchId) {
     </div>
     <div id="sumula-penaltis"></div>
     <div class="card">
-      <div class="card-title" style="margin-bottom:8px;">⚽ Gols</div>
+      <div class="card-title" style="margin-bottom:8px;">⚽ Gols & Assistências</div>
       <div id="sumula-gols"><p style="font-size:0.85rem; color:var(--text-muted);">Carregando...</p></div>
-    </div>
-    <div class="card">
-      <div class="card-title" style="margin-bottom:8px;">🔄 Substituições</div>
-      <div id="sumula-subs"><p style="font-size:0.85rem; color:var(--text-muted);">Carregando...</p></div>
     </div>
     <div class="card">
       <div class="card-title" style="margin-bottom:8px;">Ocorrências</div>
@@ -667,20 +638,15 @@ async function openSumula(matchId) {
   document.getElementById('app-modal').classList.add('active');
 
   try {
-    const [gols, subs, eventos, penaltis] = await Promise.all([
+    const [gols, eventos, penaltis] = await Promise.all([
       fetchGols(matchId),
-      fetchSubstituicoes(matchId),
       fetchEventos({ partidaId: matchId }),
       m.teve_penaltis ? fetchPenaltis(matchId) : Promise.resolve([]),
     ]);
 
     document.getElementById('sumula-gols').innerHTML = gols.length
-      ? gols.map(g => `<p style="font-size:0.85rem; color:var(--text-muted); margin-top:4px;">⚽ <b style="color:var(--text);">${g.jogadores?.nome || ''}</b> (${g.equipes?.nome || ''})${g.minuto ? ` — ${g.minuto}'` : ''}${g.tipo === 'prorrogacao' ? ' · Prorrogação' : ''}</p>`).join('')
+      ? gols.map(g => `<p style="font-size:0.85rem; color:var(--text-muted); margin-top:4px;">⚽ <b style="color:var(--text);">${g.marcador?.nome || ''}</b>${g.assistente?.nome ? ` <span style="color:var(--gold);">(assist: ${g.assistente.nome})</span>` : ''} (${g.equipes?.nome || ''})${g.minuto ? ` — ${g.minuto}'` : ''}${g.tipo === 'prorrogacao' ? ' · Prorrogação' : ''}</p>`).join('')
       : '<p style="font-size:0.85rem; color:var(--text-muted);">Nenhum gol registrado.</p>';
-
-    document.getElementById('sumula-subs').innerHTML = subs.length
-      ? subs.map(s => `<p style="font-size:0.85rem; color:var(--text-muted); margin-top:4px;">🔄 <b style="color:var(--text);">${s.entra?.nome || ''}</b> ⬆️ / ${s.saiu?.nome || ''} ⬇️ (${s.equipes?.nome || ''})${s.minuto ? ` — ${s.minuto}'` : ''}</p>`).join('')
-      : '<p style="font-size:0.85rem; color:var(--text-muted);">Nenhuma substituição registrada.</p>';
 
     document.getElementById('sumula-eventos').innerHTML = eventos.length
       ? eventos.map(ev => `
@@ -786,20 +752,20 @@ async function openEscalacoes(matchId) {
   document.getElementById('app-modal').classList.add('active');
 
   try {
-    const [escalacao, eventos, subs] = await Promise.all([
+    const [escalacao, eventos, gols] = await Promise.all([
       fetchEscalacao(matchId),
       fetchEventos({ partidaId: matchId }),
-      fetchSubstituicoes(matchId),
+      fetchGols(matchId),
     ]);
 
     const icones = (jogadorId) => {
       const cartoes = eventos.filter(e => e.jogador_id === jogadorId);
-      const saiu = subs.find(s => s.jogador_sai_id === jogadorId);
-      const entrou = subs.find(s => s.jogador_entra_id === jogadorId);
+      const golsMarcados = gols.filter(g => g.jogador_id === jogadorId).length;
+      const assistencias = gols.filter(g => g.assistencia_jogador_id === jogadorId).length;
       let out = '';
       cartoes.forEach(c => { if (TIPO_EVENTO_LABEL_PUBLICO[c.tipo]) out += `<span>${TIPO_EVENTO_LABEL_PUBLICO[c.tipo]}</span>`; });
-      if (saiu) out += '<span>🔻</span>';
-      if (entrou) out += '<span>🔺</span>';
+      if (golsMarcados) out += `<span>⚽${golsMarcados > 1 ? 'x' + golsMarcados : ''}</span>`;
+      if (assistencias) out += `<span>🅰️${assistencias > 1 ? 'x' + assistencias : ''}</span>`;
       return out;
     };
 

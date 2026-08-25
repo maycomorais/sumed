@@ -847,21 +847,19 @@ async function openSumulaAdmin(matchId) {
   document.getElementById('live-score-b').innerText = m.placar_b ?? 0;
   document.getElementById('link-transmissao').value = m.link_transmissao || '';
 
-  // Selects de equipe (gols, substituições, pênaltis)
+  // Selects de equipe (gols, pênaltis)
   const equipeOptions = `<option value="${tA?.id}">${tA?.nome}</option><option value="${tB?.id}">${tB?.nome}</option>`;
   document.getElementById('gol-equipe').innerHTML = equipeOptions;
-  document.getElementById('sub-equipe').innerHTML = equipeOptions;
   document.getElementById('pen-equipe').innerHTML = equipeOptions;
 
   populateJogadoresDoSelect('gol-equipe', 'gol-jogador');
-  populateSubstituicaoSelects();
+  populateJogadoresDoSelect('gol-equipe', 'gol-assistencia', true);
   populateJogadoresDoSelect('pen-equipe', 'pen-jogador');
 
   switchAdminScreen('sumula-admin');
 
   await Promise.all([
     renderAdminGolsList(),
-    renderAdminSubstituicoesList(),
     renderAdminPenaltisList(),
     renderEscalacaoTimes(tA, tB),
   ]);
@@ -872,18 +870,11 @@ function jogadoresDaEquipeSelecionada(selectEquipeId) {
   return teams.find(t => t.id === equipeId)?.jogadores || [];
 }
 
-function populateJogadoresDoSelect(selectEquipeId, selectJogadorId) {
+function populateJogadoresDoSelect(selectEquipeId, selectJogadorId, comOpcaoVazia) {
   const jogadores = jogadoresDaEquipeSelecionada(selectEquipeId);
-  document.getElementById(selectJogadorId).innerHTML = jogadores
-    .map(j => `<option value="${j.id}">${j.numero ? '#' + j.numero + ' ' : ''}${j.nome}</option>`)
-    .join('') || '<option value="">Sem jogadores</option>';
-}
-
-function populateSubstituicaoSelects() {
-  const jogadores = jogadoresDaEquipeSelecionada('sub-equipe');
-  const opts = jogadores.map(j => `<option value="${j.id}">${j.numero ? '#' + j.numero + ' ' : ''}${j.nome}</option>`).join('') || '<option value="">Sem jogadores</option>';
-  document.getElementById('sub-sai').innerHTML = opts;
-  document.getElementById('sub-entra').innerHTML = opts;
+  const opcoes = jogadores.map(j => `<option value="${j.id}">${j.numero ? '#' + j.numero + ' ' : ''}${j.nome}</option>`).join('');
+  const vazio = comOpcaoVazia ? '<option value="">Sem assistência</option>' : '';
+  document.getElementById(selectJogadorId).innerHTML = vazio + (opcoes || (comOpcaoVazia ? '' : '<option value="">Sem jogadores</option>'));
 }
 
 async function toggleAoVivoUI(checked) {
@@ -939,13 +930,16 @@ function toggleWrap(id, show) {
 async function addGolUI() {
   const equipe_id = document.getElementById('gol-equipe').value;
   const jogador_id = document.getElementById('gol-jogador').value;
+  const assistencia_jogador_id = document.getElementById('gol-assistencia').value;
   const minuto = document.getElementById('gol-minuto').value;
   const tipo = document.getElementById('gol-tipo').value;
   if (!jogador_id) { alert('Selecione o jogador que marcou.'); return; }
+  if (assistencia_jogador_id && assistencia_jogador_id === jogador_id) { alert('O jogador que marcou não pode ser o mesmo da assistência.'); return; }
 
   try {
-    await createGol({ partida_id: sumulaMatchId, jogador_id, equipe_id, minuto, tipo });
+    await createGol({ partida_id: sumulaMatchId, jogador_id, equipe_id, minuto, tipo, assistencia_jogador_id });
     document.getElementById('gol-minuto').value = '';
+    document.getElementById('gol-assistencia').value = '';
     renderAdminGolsList();
   } catch (e) {
     alert('Erro: ' + e.message);
@@ -958,7 +952,7 @@ async function renderAdminGolsList() {
     const gols = await fetchGols(sumulaMatchId);
     container.innerHTML = gols.map(g => `
       <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-top:1px solid var(--border-soft); font-size:0.85rem;">
-        <span>⚽ ${g.jogadores?.nome || '?'} <span style="color:var(--text-muted);">(${g.equipes?.nome || ''})${g.minuto ? ' — ' + g.minuto + "'" : ''}${g.tipo === 'prorrogacao' ? ' · PRO' : ''}</span></span>
+        <span>⚽ ${g.marcador?.nome || '?'}${g.assistente?.nome ? ` <span style="color:var(--gold);">(assist: ${g.assistente.nome})</span>` : ''} <span style="color:var(--text-muted);">(${g.equipes?.nome || ''})${g.minuto ? ' — ' + g.minuto + "'" : ''}${g.tipo === 'prorrogacao' ? ' · PRO' : ''}</span></span>
         <button class="btn-remove" onclick="deleteGolUI('${g.id}')">✕</button>
       </div>
     `).join('') || '<p style="color:var(--text-muted); font-size:0.82rem;">Nenhum gol lançado.</p>';
@@ -969,43 +963,6 @@ async function renderAdminGolsList() {
 
 async function deleteGolUI(id) {
   try { await deleteGol(id); renderAdminGolsList(); } catch (e) { alert('Erro: ' + e.message); }
-}
-
-// --- Substituições ---
-async function addSubstituicaoUI() {
-  const equipe_id = document.getElementById('sub-equipe').value;
-  const jogador_sai_id = document.getElementById('sub-sai').value;
-  const jogador_entra_id = document.getElementById('sub-entra').value;
-  const minuto = document.getElementById('sub-minuto').value;
-  if (!jogador_sai_id || !jogador_entra_id) { alert('Selecione quem sai e quem entra.'); return; }
-  if (jogador_sai_id === jogador_entra_id) { alert('Selecione jogadores diferentes.'); return; }
-
-  try {
-    await createSubstituicao({ partida_id: sumulaMatchId, equipe_id, jogador_sai_id, jogador_entra_id, minuto });
-    document.getElementById('sub-minuto').value = '';
-    renderAdminSubstituicoesList();
-  } catch (e) {
-    alert('Erro: ' + e.message);
-  }
-}
-
-async function renderAdminSubstituicoesList() {
-  const container = document.getElementById('admin-substituicoes-list');
-  try {
-    const subs = await fetchSubstituicoes(sumulaMatchId);
-    container.innerHTML = subs.map(s => `
-      <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-top:1px solid var(--border-soft); font-size:0.85rem;">
-        <span>🔄 ${s.entra?.nome || '?'} ⬆️ / ${s.saiu?.nome || '?'} ⬇️ <span style="color:var(--text-muted);">(${s.equipes?.nome || ''})${s.minuto ? ' — ' + s.minuto + "'" : ''}</span></span>
-        <button class="btn-remove" onclick="deleteSubstituicaoUI('${s.id}')">✕</button>
-      </div>
-    `).join('') || '<p style="color:var(--text-muted); font-size:0.82rem;">Nenhuma substituição lançada.</p>';
-  } catch (e) {
-    container.innerHTML = `<p style="color:var(--danger-strong); font-size:0.82rem;">Erro: ${e.message}</p>`;
-  }
-}
-
-async function deleteSubstituicaoUI(id) {
-  try { await deleteSubstituicao(id); renderAdminSubstituicoesList(); } catch (e) { alert('Erro: ' + e.message); }
 }
 
 // --- Pênaltis ---
@@ -1060,17 +1017,16 @@ async function renderEscalacaoTimes(tA, tB) {
     const jogadores = t.jogadores || [];
     const titularesCount = escalacaoAtual.filter(e => e.equipe_id === t.id && e.titular).length;
     return `
-      <div style="margin-bottom:16px;">
-        <p style="font-weight:700; margin-bottom:8px;">${t.nome} <span style="color:var(--text-muted); font-weight:400; font-size:0.78rem;">(${titularesCount}/${cfg.titulares} titulares)</span></p>
+      <div style="margin-bottom:16px;" data-equipe-id="${t.id}">
+        <p style="font-weight:700; margin-bottom:8px;">${t.nome} <span class="contador-titulares-${t.id}" style="color:var(--text-muted); font-weight:400; font-size:0.78rem;">(${titularesCount}/${cfg.titulares} titulares)</span></p>
         ${jogadores.map(j => {
           const atual = escalacaoAtual.find(e => e.jogador_id === j.id);
           return `
-            <div style="display:flex; align-items:center; gap:8px; padding:6px 0; border-top:1px solid var(--border-soft);">
+            <div class="jogador-escalacao-linha" data-equipe-id="${t.id}" data-jogador-id="${j.id}" style="display:flex; align-items:center; gap:8px; padding:6px 0; border-top:1px solid var(--border-soft);">
               <label style="display:flex; align-items:center; gap:4px; font-size:0.8rem; flex:1;">
-                <input type="checkbox" id="tit_${j.id}" ${atual?.titular ? 'checked' : ''}> ${j.numero ? '#' + j.numero + ' ' : ''}${j.nome}
+                <input type="checkbox" id="tit_${j.id}" ${atual?.titular ? 'checked' : ''} onchange="atualizarContadorTitulares('${t.id}')"> ${j.numero ? '#' + j.numero + ' ' : ''}${j.nome}
               </label>
               <input type="number" id="nota_${j.id}" class="form-control" style="width:64px;" step="0.1" min="0" max="10" placeholder="Nota" value="${atual?.nota ?? ''}">
-              <button class="btn-secondary" style="padding:6px 10px; font-size:0.75rem;" onclick="saveEscalacaoUI('${j.id}','${t.id}')">Salvar</button>
             </div>
           `;
         }).join('') || '<p style="color:var(--text-muted); font-size:0.8rem;">Sem jogadores cadastrados.</p>'}
@@ -1078,19 +1034,40 @@ async function renderEscalacaoTimes(tA, tB) {
     `;
   };
 
-  container.innerHTML = blocoTime(tA) + blocoTime(tB);
+  container.innerHTML = blocoTime(tA) + blocoTime(tB) + `
+    <button class="btn-action" style="width:100%; margin-top:6px;" onclick="salvarEscalacaoCompleta()">💾 Salvar Escalação Completa</button>
+  `;
 }
 
-async function saveEscalacaoUI(jogadorId, equipeId) {
-  const titular = document.getElementById(`tit_${jogadorId}`).checked;
-  const nota = document.getElementById(`nota_${jogadorId}`).value;
+function atualizarContadorTitulares(equipeId) {
+  const linhas = document.querySelectorAll(`.jogador-escalacao-linha[data-equipe-id="${equipeId}"]`);
+  let count = 0;
+  linhas.forEach(l => { if (document.getElementById(`tit_${l.dataset.jogadorId}`).checked) count++; });
+  document.querySelectorAll(`.contador-titulares-${equipeId}`).forEach(el => {
+    el.textContent = el.textContent.replace(/^\(\d+/, `(${count}`);
+  });
+}
+
+async function salvarEscalacaoCompleta() {
+  const linhas = document.querySelectorAll('.jogador-escalacao-linha');
+  if (!linhas.length) { alert('Nenhum jogador para salvar.'); return; }
+
   try {
-    await saveEscalacaoJogador(sumulaMatchId, equipeId, jogadorId, { titular, nota });
-    const tA = teams.find(t => t.id === matches.find(m => m.id === sumulaMatchId)?.equipe_a);
-    const tB = teams.find(t => t.id === matches.find(m => m.id === sumulaMatchId)?.equipe_b);
+    await Promise.all(Array.from(linhas).map(l => {
+      const jogadorId = l.dataset.jogadorId;
+      const equipeId = l.dataset.equipeId;
+      const titular = document.getElementById(`tit_${jogadorId}`).checked;
+      const nota = document.getElementById(`nota_${jogadorId}`).value;
+      return saveEscalacaoJogador(sumulaMatchId, equipeId, jogadorId, { titular, nota });
+    }));
+
+    alert('Escalação completa salva!');
+    const m = matches.find(x => x.id === sumulaMatchId);
+    const tA = teams.find(t => t.id === m?.equipe_a);
+    const tB = teams.find(t => t.id === m?.equipe_b);
     await renderEscalacaoTimes(tA, tB);
   } catch (e) {
-    alert('Erro: ' + e.message);
+    alert('Erro ao salvar escalação: ' + e.message);
   }
 }
 

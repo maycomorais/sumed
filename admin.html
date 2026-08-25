@@ -326,6 +326,29 @@
         <span class="section-label" style="margin:0;" id="sumula-admin-title">Súmula</span>
       </div>
 
+      <div class="card" style="border-color: var(--gold);">
+        <div class="card-title">⚽ Gols & Assistências</div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+          <select id="gol-equipe" class="form-control" onchange="populateJogadoresDoSelect('gol-equipe','gol-jogador'); populateJogadoresDoSelect('gol-equipe','gol-assistencia')"></select>
+          <select id="gol-jogador" class="form-control"></select>
+        </div>
+        <div style="margin-top:8px;">
+          <label style="display:block; font-size:0.68rem; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-muted); margin-bottom:5px;">Assistência (opcional)</label>
+          <select id="gol-assistencia" class="form-control">
+            <option value="">Sem assistência</option>
+          </select>
+        </div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px;">
+          <input type="number" id="gol-minuto" class="form-control" placeholder="Minuto">
+          <select id="gol-tipo" class="form-control">
+            <option value="normal">Tempo normal</option>
+            <option value="prorrogacao">Prorrogação</option>
+          </select>
+        </div>
+        <button class="btn-action" style="margin-top:8px; width:100%;" onclick="addGolUI()">+ Registrar Gol</button>
+        <div id="admin-gols-list" style="margin-top:10px;"></div>
+      </div>
+
       <div class="card" style="border-color: var(--danger-strong);">
         <div class="card-title">🔴 Transmissão Ao Vivo</div>
         <label style="display:flex; align-items:center; gap:8px; font-size:0.85rem; margin-bottom:12px;">
@@ -377,35 +400,6 @@
           <button class="btn-secondary" style="margin-top:8px;" onclick="addPenaltiUI()">+ Cobrança</button>
           <div id="admin-penaltis-list" style="margin-top:10px;"></div>
         </div>
-      </div>
-
-      <div class="card">
-        <div class="card-title">⚽ Gols</div>
-        <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
-          <select id="gol-equipe" class="form-control" onchange="populateJogadoresDoSelect('gol-equipe','gol-jogador')"></select>
-          <select id="gol-jogador" class="form-control"></select>
-        </div>
-        <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px;">
-          <input type="number" id="gol-minuto" class="form-control" placeholder="Minuto">
-          <select id="gol-tipo" class="form-control">
-            <option value="normal">Tempo normal</option>
-            <option value="prorrogacao">Prorrogação</option>
-          </select>
-        </div>
-        <button class="btn-secondary" style="margin-top:8px;" onclick="addGolUI()">+ Gol</button>
-        <div id="admin-gols-list" style="margin-top:10px;"></div>
-      </div>
-
-      <div class="card">
-        <div class="card-title">🔄 Substituições</div>
-        <select id="sub-equipe" class="form-control" onchange="populateSubstituicaoSelects()"></select>
-        <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px;">
-          <select id="sub-sai" class="form-control"></select>
-          <select id="sub-entra" class="form-control"></select>
-        </div>
-        <input type="number" id="sub-minuto" class="form-control" placeholder="Minuto" style="margin-top:8px;">
-        <button class="btn-secondary" style="margin-top:8px;" onclick="addSubstituicaoUI()">+ Substituição</button>
-        <div id="admin-substituicoes-list" style="margin-top:10px;"></div>
       </div>
 
       <div class="card">
