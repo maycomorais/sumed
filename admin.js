@@ -9,6 +9,15 @@ let adminRound = 1;
 let teams = [];
 let matches = [];
 let jogadoresPendentes = []; // linhas do formulário "Nova Equipe" ainda não salvas
+let minJogadoresExigidos = 11; // atualizado a partir do "Formato do Campeonato" da categoria
+
+function updateMinJogadoresNote() {
+  const el = document.getElementById('min-jogadores-note');
+  if (!el) return;
+  const validos = jogadoresPendentes.filter(j => j.nome && j.nome.trim()).length;
+  el.textContent = `${validos} de ${minJogadoresExigidos} jogadores mínimos preenchidos.`;
+  el.classList.toggle('atendido', validos >= minJogadoresExigidos);
+}
 
 const ROLE_LABELS = {
   admin_master: 'AdminMaster',
@@ -21,8 +30,12 @@ const ROLE_LABELS = {
 // ---------------------------------------------------------------------
 const ADMIN_NAV_MAP = {
   sorteio: 'sorteio', placar: 'placar', equipes: 'equipes', disciplina: 'disciplina',
-  mais: 'mais', patrocinadores: 'mais', usuarios: 'mais',
+  mais: 'mais', patrocinadores: 'mais', usuarios: 'mais', formato: 'mais',
+  'sumula-admin': 'placar',
 };
+
+let sumulaMatchId = null;
+let editingTeamId = null;
 
 function switchAdminScreen(screenId) {
   document.querySelectorAll('.screen').forEach(el => el.classList.remove('active'));
@@ -32,10 +45,12 @@ function switchAdminScreen(screenId) {
   document.querySelector(`.bottom-nav-item[data-screen="${ADMIN_NAV_MAP[screenId]}"]`)?.classList.add('active');
 
   if (screenId === 'placar') loadAdminRound();
+  if (screenId === 'sorteio') loadCalendarioCompleto();
   if (screenId === 'equipes') renderAdminTeamsList();
   if (screenId === 'patrocinadores') renderAdminSponsorsList();
   if (screenId === 'usuarios') renderAdminUsersList();
   if (screenId === 'disciplina') initDisciplinaTab();
+  if (screenId === 'formato') initFormatoTab();
 
   window.scrollTo(0, 0);
 }
@@ -60,10 +75,22 @@ async function setAdminCategoria(categoria) {
   teams = await fetchTeams(adminCategoria);
   renderAdminTeamsSummary();
   renderAdminTeamsList();
+  await loadMinJogadoresExigidos();
 
   const activeScreen = document.querySelector('.screen.active')?.id?.replace('screen-', '');
   if (activeScreen === 'placar') loadAdminRound();
+  if (activeScreen === 'sorteio') loadCalendarioCompleto();
   if (activeScreen === 'disciplina') initDisciplinaTab();
+}
+
+async function loadMinJogadoresExigidos() {
+  try {
+    const cfg = await fetchModalidade(adminCategoria);
+    minJogadoresExigidos = cfg.titulares || 11;
+  } catch (e) {
+    minJogadoresExigidos = 11;
+  }
+  updateMinJogadoresNote();
 }
 
 // ---------------------------------------------------------------------
@@ -101,6 +128,8 @@ async function initAdmin() {
   renderAdminTeamsSummary();
   addJogadorRow(); // primeira linha do formulário já vem pronta
   renderAdminTeamsList();
+  await loadMinJogadoresExigidos();
+  await loadAdminRound(); // tela inicial agora é "Placar"
 }
 
 function previewImage(inputId, previewId) {
@@ -123,6 +152,38 @@ function renderAdminTeamsSummary() {
     : `<p style="color:var(--text-muted); font-size:0.85rem;">Nenhuma equipe cadastrada ainda. Vá em "Equipes" para cadastrar.</p>`;
 }
 
+async function loadCalendarioCompleto() {
+  const container = document.getElementById('admin-calendario-completo');
+  container.innerHTML = '<p style="color:var(--text-muted); font-size:0.85rem;">Carregando...</p>';
+  try {
+    const todasPartidas = await fetchMatches(adminCategoria);
+    if (!todasPartidas.length) {
+      container.innerHTML = '<p style="color:var(--text-muted); font-size:0.85rem;">Nenhum sorteio gerado ainda nesta categoria.</p>';
+      return;
+    }
+    const porRodada = {};
+    todasPartidas.forEach(m => { (porRodada[m.rodada] = porRodada[m.rodada] || []).push(m); });
+
+    container.innerHTML = Object.keys(porRodada).sort((a, b) => a - b).map(r => `
+      <div class="card" style="margin-bottom:8px;">
+        <p style="font-weight:700; margin-bottom:8px; font-size:0.88rem;">Rodada ${r}</p>
+        ${porRodada[r].map(m => {
+          if (m.is_bye) {
+            const t = teams.find(x => x.id === m.equipe_a)?.nome || '?';
+            return `<p style="color:var(--text-muted); font-size:0.8rem; padding:3px 0;">⏸️ Folga: ${t}</p>`;
+          }
+          const tA = teams.find(x => x.id === m.equipe_a)?.nome || '?';
+          const tB = teams.find(x => x.id === m.equipe_b)?.nome || '?';
+          const placar = m.status === 'FINISHED' ? `${m.placar_a} × ${m.placar_b}` : 'vs';
+          return `<p style="font-size:0.82rem; padding:3px 0; border-top:1px solid var(--border-soft);">${tA} <span style="color:var(--gold-bright); font-weight:700;">${placar}</span> ${tB}</p>`;
+        }).join('')}
+      </div>
+    `).join('');
+  } catch (e) {
+    container.innerHTML = `<p style="color:var(--danger-strong); font-size:0.85rem;">Erro ao carregar: ${e.message}</p>`;
+  }
+}
+
 async function generateDraw() {
   const podeGerarSorteio = [ROLES.ADMIN_MASTER, ROLES.PRESIDENTE].includes(currentUser.profile.role);
   if (!podeGerarSorteio) {
@@ -138,6 +199,7 @@ async function generateDraw() {
   try {
     await gerarSorteio(teams.map(t => t.id), adminCategoria);
     alert(`Sorteio oficial gerado para a categoria ${adminCategoria === 'masculino' ? 'Masculino' : 'Feminino'}!`);
+    loadCalendarioCompleto();
   } catch (e) {
     alert('Erro ao gerar sorteio: ' + e.message);
   }
@@ -193,7 +255,10 @@ function renderAdminRound() {
           <input type="time" id="time_${m.id}" value="${m.hora || ''}" class="form-control">
         </div>
         <input type="text" id="local_${m.id}" value="${m.local || ''}" placeholder="Local" class="form-control" style="margin-top:8px;">
-        <button class="btn-action" style="width:100%; margin-top:10px;" onclick="saveMatchUI('${m.id}')">Salvar</button>
+        <div style="display:flex; gap:8px; margin-top:10px;">
+          <button class="btn-action" style="flex:1;" onclick="saveMatchUI('${m.id}')">Salvar</button>
+          <button class="btn-secondary" onclick="openSumulaAdmin('${m.id}')">📋 Súmula</button>
+        </div>
       </div>
     `;
   }).join('');
@@ -219,6 +284,35 @@ async function saveMatchUI(matchId) {
 }
 
 // ---------------------------------------------------------------------
+// FORMATO DO CAMPEONATO (Campo/Quadra/Society por categoria)
+// ---------------------------------------------------------------------
+async function initFormatoTab() {
+  document.getElementById('formato-categoria-label').innerText = adminCategoria === 'masculino' ? 'Masculino' : 'Feminino';
+  try {
+    const cfg = await fetchModalidade(adminCategoria);
+    document.getElementById('formato-modalidade').value = cfg.modalidade;
+    document.getElementById('formato-titulares').value = cfg.titulares;
+    document.getElementById('formato-reservas').value = cfg.reservas;
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+async function saveFormato(e) {
+  e.preventDefault();
+  const modalidade = document.getElementById('formato-modalidade').value;
+  const titulares = document.getElementById('formato-titulares').value;
+  const reservas = document.getElementById('formato-reservas').value;
+  try {
+    await saveModalidade(adminCategoria, { modalidade, titulares, reservas });
+    await loadMinJogadoresExigidos();
+    alert('Formato salvo!');
+  } catch (e) {
+    alert('Erro: ' + e.message);
+  }
+}
+
+// ---------------------------------------------------------------------
 // EQUIPES + JOGADORES (formulário dinâmico)
 // ---------------------------------------------------------------------
 function addJogadorRow() {
@@ -226,35 +320,34 @@ function addJogadorRow() {
   jogadoresPendentes.push({ rowId: id, nome: '', numero: '', posicao: '', fotoFile: null });
 
   const list = document.getElementById('jogadores-list');
-  const row = document.createElement('div');
-  row.className = 'jogador-row';
-  row.id = id;
-  row.innerHTML = `
-    <img class="upload-preview" id="prev_${id}" style="display:none; width:40px; height:40px;">
-    <input type="text" class="form-control" placeholder="Nome do jogador" oninput="updateJogadorField('${id}','nome',this.value)">
-    <input type="number" class="form-control" style="max-width:60px;" placeholder="Nº" oninput="updateJogadorField('${id}','numero',this.value)">
-    <select class="form-control" style="max-width:80px;" onchange="updateJogadorField('${id}','posicao',this.value)">
-      <option value="">Posição</option>
-      <option value="GOL">GOL</option>
-      <option value="ZAG">ZAG</option>
-      <option value="LD">LD</option>
-      <option value="LE">LE</option>
-      <option value="MC">MC</option>
-      <option value="MD">MD</option>
-      <option value="ME">ME</option>
-      <option value="PE">PE</option>
-      <option value="PD">PD</option>
-      <option value="CA">CA</option>
-    </select>
-    <input type="file" accept="image/*" style="max-width:120px; font-size:0.7rem;" onchange="handleJogadorFoto('${id}', this)">
-    <button type="button" class="btn-remove" onclick="removeJogadorRow('${id}')">✕</button>
+  const card = document.createElement('div');
+  card.className = 'jogador-card';
+  card.id = id;
+  card.innerHTML = `
+    <div class="jogador-card-header">
+      <img class="jogador-card-avatar" id="prev_${id}" style="display:none;">
+      <input type="text" class="form-control" style="flex:1;" placeholder="Nome do jogador" oninput="updateJogadorField('${id}','nome',this.value)">
+    </div>
+    <div class="jogador-card-row">
+      <input type="number" class="form-control" placeholder="Número da camisa" oninput="updateJogadorField('${id}','numero',this.value)">
+      <select class="form-control" onchange="updateJogadorField('${id}','posicao',this.value)">${opcoesPosicao('')}</select>
+    </div>
+    <div class="jogador-card-file">
+      <label>Foto do jogador (opcional)</label>
+      <input type="file" accept="image/*" class="form-control" onchange="handleJogadorFoto('${id}', this)">
+    </div>
+    <div class="jogador-card-actions">
+      <button type="button" class="btn-remove" onclick="removeJogadorRow('${id}')">✕ Remover esta linha</button>
+    </div>
   `;
-  list.appendChild(row);
+  list.appendChild(card);
+  updateMinJogadoresNote();
 }
 
 function updateJogadorField(rowId, field, value) {
   const row = jogadoresPendentes.find(j => j.rowId === rowId);
   if (row) row[field] = value;
+  if (field === 'nome') updateMinJogadoresNote();
 }
 
 function handleJogadorFoto(rowId, input) {
@@ -270,13 +363,23 @@ function handleJogadorFoto(rowId, input) {
 function removeJogadorRow(rowId) {
   jogadoresPendentes = jogadoresPendentes.filter(j => j.rowId !== rowId);
   document.getElementById(rowId)?.remove();
+  updateMinJogadoresNote();
 }
 
 async function saveTeam(e) {
   e.preventDefault();
+
+  if (!editingTeamId) {
+    const jogadoresValidosCheck = jogadoresPendentes.filter(j => j.nome && j.nome.trim());
+    if (jogadoresValidosCheck.length < minJogadoresExigidos) {
+      alert(`Faltam jogadores: cadastre pelo menos ${minJogadoresExigidos} (formato configurado em "Formato do Campeonato") antes de salvar a equipe. Você preencheu ${jogadoresValidosCheck.length}.`);
+      return;
+    }
+  }
+
   const btn = document.getElementById('btn-salvar-equipe');
   btn.disabled = true;
-  btn.textContent = 'Salvando...';
+  btn.textContent = editingTeamId ? 'Salvando alterações...' : 'Salvando...';
 
   try {
     const nome = document.getElementById('team-name').value;
@@ -286,16 +389,20 @@ async function saveTeam(e) {
     const diretor_marketing = document.getElementById('team-marketing').value;
     const escudoFile = document.getElementById('team-escudo').files[0] || null;
 
-    const jogadoresValidos = jogadoresPendentes.filter(j => j.nome && j.nome.trim());
-
-    await createTeam({ nome, presidente, capitao, comissao_tecnica, diretor_marketing, categoria: adminCategoria, escudoFile, jogadores: jogadoresValidos });
-
-    alert('Equipe cadastrada!');
-    document.getElementById('form-team').reset();
-    document.getElementById('escudo-preview').style.display = 'none';
-    document.getElementById('jogadores-list').innerHTML = '';
-    jogadoresPendentes = [];
-    addJogadorRow();
+    if (editingTeamId) {
+      await updateTeam(editingTeamId, { nome, presidente, capitao, comissao_tecnica, diretor_marketing, escudoFile });
+      alert('Equipe atualizada!');
+      cancelEditTeam();
+    } else {
+      const jogadoresValidos = jogadoresPendentes.filter(j => j.nome && j.nome.trim());
+      await createTeam({ nome, presidente, capitao, comissao_tecnica, diretor_marketing, categoria: adminCategoria, escudoFile, jogadores: jogadoresValidos });
+      alert('Equipe cadastrada!');
+      document.getElementById('form-team').reset();
+      document.getElementById('escudo-preview').style.display = 'none';
+      document.getElementById('jogadores-list').innerHTML = '';
+      jogadoresPendentes = [];
+      addJogadorRow();
+    }
 
     teams = await fetchTeams(adminCategoria);
     renderAdminTeamsSummary();
@@ -304,7 +411,161 @@ async function saveTeam(e) {
     alert('Erro ao salvar equipe: ' + err.message);
   } finally {
     btn.disabled = false;
-    btn.textContent = 'Salvar Equipe';
+    btn.textContent = editingTeamId ? 'Salvar Alterações' : 'Salvar Equipe';
+  }
+}
+
+function editTeam(teamId) {
+  const t = teams.find(x => x.id === teamId);
+  if (!t) return;
+  editingTeamId = teamId;
+
+  document.getElementById('team-name').value = t.nome;
+  document.getElementById('team-president').value = t.presidente === 'A definir' ? '' : t.presidente;
+  document.getElementById('team-captain').value = t.capitao === 'A definir' ? '' : t.capitao;
+  document.getElementById('team-staff').value = t.comissao_tecnica === 'A definir' ? '' : t.comissao_tecnica;
+  document.getElementById('team-marketing').value = (t.diretor_marketing && t.diretor_marketing !== 'A definir') ? t.diretor_marketing : '';
+  if (t.escudo_url) {
+    document.getElementById('escudo-preview').src = t.escudo_url;
+    document.getElementById('escudo-preview').style.display = 'block';
+  }
+
+  document.getElementById('btn-add-jogador-row').style.display = 'none';
+  renderElencoEdicao(t);
+
+  document.getElementById('btn-salvar-equipe').textContent = 'Salvar Alterações';
+  document.getElementById('btn-cancelar-edicao').style.display = 'inline-block';
+  document.getElementById('card-nova-equipe').scrollIntoView({ behavior: 'smooth' });
+}
+
+function cancelEditTeam() {
+  editingTeamId = null;
+  document.getElementById('form-team').reset();
+  document.getElementById('escudo-preview').style.display = 'none';
+  document.getElementById('btn-add-jogador-row').style.display = 'inline-block';
+  document.getElementById('jogadores-list').innerHTML = '';
+  jogadoresPendentes = [];
+  addJogadorRow();
+  document.getElementById('btn-salvar-equipe').textContent = 'Salvar Equipe';
+  document.getElementById('btn-cancelar-edicao').style.display = 'none';
+}
+
+// ---------------------------------------------------------------------
+// EDITOR DE ELENCO (dentro do modo de edição de equipe)
+// ---------------------------------------------------------------------
+const POSICOES_JOGADOR = ['GOL', 'ZAG', 'LD', 'LE', 'MC', 'MD', 'ME', 'PE', 'PD', 'CA'];
+let elencoFotoPendente = {};
+
+function opcoesPosicao(selecionada) {
+  return '<option value="">Posição</option>' + POSICOES_JOGADOR.map(p => `<option value="${p}" ${p === selecionada ? 'selected' : ''}>${p}</option>`).join('');
+}
+
+function renderElencoEdicao(t) {
+  const list = document.getElementById('jogadores-list');
+  const jogadores = t.jogadores || [];
+
+  const existentesHtml = jogadores.map(j => `
+    <div class="jogador-card">
+      <div class="jogador-card-header">
+        <img class="jogador-card-avatar" id="elprev_${j.id}" src="${j.foto_url || ''}" style="${j.foto_url ? '' : 'display:none;'}">
+        <input type="text" class="form-control" style="flex:1;" id="el_nome_${j.id}" value="${j.nome}" placeholder="Nome">
+      </div>
+      <div class="jogador-card-row">
+        <input type="number" class="form-control" id="el_numero_${j.id}" value="${j.numero ?? ''}" placeholder="Número da camisa">
+        <select class="form-control" id="el_posicao_${j.id}">${opcoesPosicao(j.posicao)}</select>
+      </div>
+      <div class="jogador-card-file">
+        <label>Trocar foto</label>
+        <input type="file" accept="image/*" class="form-control" onchange="handleElencoFoto('${j.id}', this, 'elprev_${j.id}')">
+      </div>
+      <div class="jogador-card-actions">
+        <button type="button" class="btn-action" onclick="salvarJogadorExistente('${j.id}')">💾 Salvar Alterações</button>
+        <button type="button" class="btn-remove" onclick="removerJogadorExistente('${j.id}')">✕ Remover</button>
+      </div>
+    </div>
+  `).join('');
+
+  const novoHtml = `
+    <div class="jogador-card novo">
+      <p style="color:var(--gold); font-size:0.78rem; font-weight:700; margin-bottom:10px;">➕ Novo jogador — preencha e cadastre</p>
+      <div class="jogador-card-header">
+        <img class="jogador-card-avatar" id="elprev_novo" style="display:none;">
+        <input type="text" class="form-control" style="flex:1;" id="el_novo_nome" placeholder="Nome do novo jogador">
+      </div>
+      <div class="jogador-card-row">
+        <input type="number" class="form-control" id="el_novo_numero" placeholder="Número da camisa">
+        <select class="form-control" id="el_novo_posicao">${opcoesPosicao('')}</select>
+      </div>
+      <div class="jogador-card-file">
+        <label>Foto (opcional)</label>
+        <input type="file" accept="image/*" class="form-control" onchange="handleElencoFoto('novo', this, 'elprev_novo')">
+      </div>
+      <div class="jogador-card-actions">
+        <button type="button" class="btn-action" onclick="adicionarNovoJogadorElenco()">✅ Cadastrar este Jogador no Elenco</button>
+      </div>
+    </div>
+  `;
+
+  list.innerHTML = `<p style="color:var(--text-muted); font-size:0.75rem; margin-bottom:8px;">${jogadores.length} jogador(es) no elenco.</p>` + existentesHtml + novoHtml;
+}
+
+function handleElencoFoto(key, input, previewId) {
+  elencoFotoPendente[key] = input.files[0] || null;
+  const preview = document.getElementById(previewId);
+  if (elencoFotoPendente[key]) {
+    preview.src = URL.createObjectURL(elencoFotoPendente[key]);
+    preview.style.display = 'block';
+  }
+}
+
+async function refreshElenco() {
+  teams = await fetchTeams(adminCategoria);
+  const t = teams.find(x => x.id === editingTeamId);
+  if (t) renderElencoEdicao(t);
+  renderAdminTeamsList();
+}
+
+async function salvarJogadorExistente(jogadorId) {
+  const nome = document.getElementById(`el_nome_${jogadorId}`).value;
+  const numero = document.getElementById(`el_numero_${jogadorId}`).value;
+  const posicao = document.getElementById(`el_posicao_${jogadorId}`).value;
+  const fotoFile = elencoFotoPendente[jogadorId] || null;
+
+  if (!nome.trim()) { alert('O nome do jogador não pode ficar em branco.'); return; }
+
+  try {
+    await updateJogador(jogadorId, { nome, numero, posicao, fotoFile });
+    elencoFotoPendente[jogadorId] = null;
+    await refreshElenco();
+  } catch (e) {
+    alert('Erro ao salvar jogador: ' + e.message);
+  }
+}
+
+async function removerJogadorExistente(jogadorId) {
+  if (!confirm('Remover este jogador do elenco? Isso também apaga o histórico de escalação/eventos ligados a ele.')) return;
+  try {
+    await deleteJogador(jogadorId);
+    await refreshElenco();
+  } catch (e) {
+    alert('Erro ao remover jogador: ' + e.message);
+  }
+}
+
+async function adicionarNovoJogadorElenco() {
+  const nome = document.getElementById('el_novo_nome').value;
+  const numero = document.getElementById('el_novo_numero').value;
+  const posicao = document.getElementById('el_novo_posicao').value;
+  const fotoFile = elencoFotoPendente['novo'] || null;
+
+  if (!nome.trim()) { alert('Informe o nome do jogador.'); return; }
+
+  try {
+    await addJogador(editingTeamId, { nome, numero, posicao, fotoFile });
+    elencoFotoPendente['novo'] = null;
+    await refreshElenco();
+  } catch (e) {
+    alert('Erro ao adicionar jogador: ' + e.message);
   }
 }
 
@@ -319,6 +580,7 @@ function renderAdminTeamsList() {
         <b>${t.nome}</b>
         <p style="font-size:0.8rem; color:var(--text-muted);">${(t.jogadores || []).length} jogador(es) cadastrado(s)</p>
       </div>
+      <button class="btn-secondary" onclick="editTeam('${t.id}')">Editar</button>
     </div>
   `).join('') || '<p style="color:var(--text-muted); text-align:center; padding:16px 0;">Nenhuma equipe cadastrada nesta categoria ainda.</p>';
 }
@@ -561,5 +823,277 @@ async function deleteEventoUI(id) {
     alert('Erro: ' + e.message);
   }
 }
+
+// ---------------------------------------------------------------------
+// SÚMULA COMPLETA DE UMA PARTIDA
+// ---------------------------------------------------------------------
+async function openSumulaAdmin(matchId) {
+  sumulaMatchId = matchId;
+  const m = matches.find(x => x.id === matchId);
+  if (!m) return;
+
+  const tA = teams.find(t => t.id === m.equipe_a);
+  const tB = teams.find(t => t.id === m.equipe_b);
+  document.getElementById('sumula-admin-title').innerText = `${tA?.nome || '?'} × ${tB?.nome || '?'}`;
+  document.getElementById('chk-prorrogacao').checked = !!m.teve_prorrogacao;
+  document.getElementById('chk-penaltis').checked = !!m.teve_penaltis;
+  document.getElementById('wrap-penaltis').style.display = m.teve_penaltis ? 'block' : 'none';
+
+  document.getElementById('chk-ao-vivo').checked = m.status === 'LIVE';
+  document.getElementById('wrap-placar-ao-vivo').style.display = m.status === 'LIVE' ? 'block' : 'none';
+  document.getElementById('live-nome-a').innerText = tA?.nome || '';
+  document.getElementById('live-nome-b').innerText = tB?.nome || '';
+  document.getElementById('live-score-a').innerText = m.placar_a ?? 0;
+  document.getElementById('live-score-b').innerText = m.placar_b ?? 0;
+  document.getElementById('link-transmissao').value = m.link_transmissao || '';
+
+  // Selects de equipe (gols, substituições, pênaltis)
+  const equipeOptions = `<option value="${tA?.id}">${tA?.nome}</option><option value="${tB?.id}">${tB?.nome}</option>`;
+  document.getElementById('gol-equipe').innerHTML = equipeOptions;
+  document.getElementById('sub-equipe').innerHTML = equipeOptions;
+  document.getElementById('pen-equipe').innerHTML = equipeOptions;
+
+  populateJogadoresDoSelect('gol-equipe', 'gol-jogador');
+  populateSubstituicaoSelects();
+  populateJogadoresDoSelect('pen-equipe', 'pen-jogador');
+
+  switchAdminScreen('sumula-admin');
+
+  await Promise.all([
+    renderAdminGolsList(),
+    renderAdminSubstituicoesList(),
+    renderAdminPenaltisList(),
+    renderEscalacaoTimes(tA, tB),
+  ]);
+}
+
+function jogadoresDaEquipeSelecionada(selectEquipeId) {
+  const equipeId = document.getElementById(selectEquipeId).value;
+  return teams.find(t => t.id === equipeId)?.jogadores || [];
+}
+
+function populateJogadoresDoSelect(selectEquipeId, selectJogadorId) {
+  const jogadores = jogadoresDaEquipeSelecionada(selectEquipeId);
+  document.getElementById(selectJogadorId).innerHTML = jogadores
+    .map(j => `<option value="${j.id}">${j.numero ? '#' + j.numero + ' ' : ''}${j.nome}</option>`)
+    .join('') || '<option value="">Sem jogadores</option>';
+}
+
+function populateSubstituicaoSelects() {
+  const jogadores = jogadoresDaEquipeSelecionada('sub-equipe');
+  const opts = jogadores.map(j => `<option value="${j.id}">${j.numero ? '#' + j.numero + ' ' : ''}${j.nome}</option>`).join('') || '<option value="">Sem jogadores</option>';
+  document.getElementById('sub-sai').innerHTML = opts;
+  document.getElementById('sub-entra').innerHTML = opts;
+}
+
+async function toggleAoVivoUI(checked) {
+  try {
+    await setMatchLive(sumulaMatchId, checked);
+    document.getElementById('wrap-placar-ao-vivo').style.display = checked ? 'block' : 'none';
+    const m = matches.find(x => x.id === sumulaMatchId);
+    if (m) m.status = checked ? 'LIVE' : 'SCHEDULED';
+  } catch (e) {
+    alert('Erro: ' + e.message);
+  }
+}
+
+async function ajustarPlacarAoVivo(lado, delta) {
+  const spanId = lado === 'a' ? 'live-score-a' : 'live-score-b';
+  const atual = parseInt(document.getElementById(spanId).innerText) || 0;
+  const novo = Math.max(0, atual + delta);
+  document.getElementById(spanId).innerText = novo;
+
+  const scoreA = lado === 'a' ? novo : parseInt(document.getElementById('live-score-a').innerText) || 0;
+  const scoreB = lado === 'b' ? novo : parseInt(document.getElementById('live-score-b').innerText) || 0;
+
+  try {
+    await updateLiveScore(sumulaMatchId, scoreA, scoreB);
+  } catch (e) {
+    alert('Erro: ' + e.message);
+  }
+}
+
+async function salvarLinkTransmissaoUI() {
+  const link = document.getElementById('link-transmissao').value;
+  try {
+    await saveLinkTransmissao(sumulaMatchId, link);
+    alert('Link de transmissão salvo!');
+  } catch (e) {
+    alert('Erro: ' + e.message);
+  }
+}
+
+async function toggleFlagUI(flag, checked) {
+  try {
+    await updatePartidaFlags(sumulaMatchId, { [flag]: checked });
+  } catch (e) {
+    alert('Erro: ' + e.message);
+  }
+}
+
+function toggleWrap(id, show) {
+  document.getElementById(id).style.display = show ? 'block' : 'none';
+}
+
+// --- Gols ---
+async function addGolUI() {
+  const equipe_id = document.getElementById('gol-equipe').value;
+  const jogador_id = document.getElementById('gol-jogador').value;
+  const minuto = document.getElementById('gol-minuto').value;
+  const tipo = document.getElementById('gol-tipo').value;
+  if (!jogador_id) { alert('Selecione o jogador que marcou.'); return; }
+
+  try {
+    await createGol({ partida_id: sumulaMatchId, jogador_id, equipe_id, minuto, tipo });
+    document.getElementById('gol-minuto').value = '';
+    renderAdminGolsList();
+  } catch (e) {
+    alert('Erro: ' + e.message);
+  }
+}
+
+async function renderAdminGolsList() {
+  const container = document.getElementById('admin-gols-list');
+  try {
+    const gols = await fetchGols(sumulaMatchId);
+    container.innerHTML = gols.map(g => `
+      <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-top:1px solid var(--border-soft); font-size:0.85rem;">
+        <span>⚽ ${g.jogadores?.nome || '?'} <span style="color:var(--text-muted);">(${g.equipes?.nome || ''})${g.minuto ? ' — ' + g.minuto + "'" : ''}${g.tipo === 'prorrogacao' ? ' · PRO' : ''}</span></span>
+        <button class="btn-remove" onclick="deleteGolUI('${g.id}')">✕</button>
+      </div>
+    `).join('') || '<p style="color:var(--text-muted); font-size:0.82rem;">Nenhum gol lançado.</p>';
+  } catch (e) {
+    container.innerHTML = `<p style="color:var(--danger-strong); font-size:0.82rem;">Erro: ${e.message}</p>`;
+  }
+}
+
+async function deleteGolUI(id) {
+  try { await deleteGol(id); renderAdminGolsList(); } catch (e) { alert('Erro: ' + e.message); }
+}
+
+// --- Substituições ---
+async function addSubstituicaoUI() {
+  const equipe_id = document.getElementById('sub-equipe').value;
+  const jogador_sai_id = document.getElementById('sub-sai').value;
+  const jogador_entra_id = document.getElementById('sub-entra').value;
+  const minuto = document.getElementById('sub-minuto').value;
+  if (!jogador_sai_id || !jogador_entra_id) { alert('Selecione quem sai e quem entra.'); return; }
+  if (jogador_sai_id === jogador_entra_id) { alert('Selecione jogadores diferentes.'); return; }
+
+  try {
+    await createSubstituicao({ partida_id: sumulaMatchId, equipe_id, jogador_sai_id, jogador_entra_id, minuto });
+    document.getElementById('sub-minuto').value = '';
+    renderAdminSubstituicoesList();
+  } catch (e) {
+    alert('Erro: ' + e.message);
+  }
+}
+
+async function renderAdminSubstituicoesList() {
+  const container = document.getElementById('admin-substituicoes-list');
+  try {
+    const subs = await fetchSubstituicoes(sumulaMatchId);
+    container.innerHTML = subs.map(s => `
+      <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-top:1px solid var(--border-soft); font-size:0.85rem;">
+        <span>🔄 ${s.entra?.nome || '?'} ⬆️ / ${s.saiu?.nome || '?'} ⬇️ <span style="color:var(--text-muted);">(${s.equipes?.nome || ''})${s.minuto ? ' — ' + s.minuto + "'" : ''}</span></span>
+        <button class="btn-remove" onclick="deleteSubstituicaoUI('${s.id}')">✕</button>
+      </div>
+    `).join('') || '<p style="color:var(--text-muted); font-size:0.82rem;">Nenhuma substituição lançada.</p>';
+  } catch (e) {
+    container.innerHTML = `<p style="color:var(--danger-strong); font-size:0.82rem;">Erro: ${e.message}</p>`;
+  }
+}
+
+async function deleteSubstituicaoUI(id) {
+  try { await deleteSubstituicao(id); renderAdminSubstituicoesList(); } catch (e) { alert('Erro: ' + e.message); }
+}
+
+// --- Pênaltis ---
+async function addPenaltiUI() {
+  const equipe_id = document.getElementById('pen-equipe').value;
+  const jogador_id = document.getElementById('pen-jogador').value;
+  const ordem = document.getElementById('pen-ordem').value;
+  const convertido = document.getElementById('pen-convertido').checked;
+  if (!jogador_id || !ordem) { alert('Preencha jogador e ordem da cobrança.'); return; }
+
+  try {
+    await createPenaltiCobranca({ partida_id: sumulaMatchId, equipe_id, jogador_id, ordem: parseInt(ordem), convertido });
+    document.getElementById('pen-ordem').value = '';
+    renderAdminPenaltisList();
+  } catch (e) {
+    alert('Erro: ' + e.message);
+  }
+}
+
+async function renderAdminPenaltisList() {
+  const container = document.getElementById('admin-penaltis-list');
+  try {
+    const penaltis = await fetchPenaltis(sumulaMatchId);
+    container.innerHTML = penaltis.map(p => `
+      <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-top:1px solid var(--border-soft); font-size:0.85rem;">
+        <span>${p.convertido ? '✅' : '❌'} #${p.ordem} ${p.jogadores?.nome || '?'} <span style="color:var(--text-muted);">(${p.equipes?.nome || ''})</span></span>
+        <button class="btn-remove" onclick="deletePenaltiUI('${p.id}')">✕</button>
+      </div>
+    `).join('') || '<p style="color:var(--text-muted); font-size:0.82rem;">Nenhuma cobrança lançada.</p>';
+  } catch (e) {
+    container.innerHTML = `<p style="color:var(--danger-strong); font-size:0.82rem;">Erro: ${e.message}</p>`;
+  }
+}
+
+async function deletePenaltiUI(id) {
+  try { await deletePenaltiCobranca(id); renderAdminPenaltisList(); } catch (e) { alert('Erro: ' + e.message); }
+}
+
+// --- Escalação & Notas ---
+async function renderEscalacaoTimes(tA, tB) {
+  const container = document.getElementById('admin-escalacao-times');
+  container.innerHTML = '<p style="color:var(--text-muted); font-size:0.85rem;">Carregando...</p>';
+
+  let cfg = MODALIDADE_PADRAO_FALLBACK;
+  try { cfg = await fetchModalidade(adminCategoria); } catch (e) { console.error(e); }
+
+  let escalacaoAtual = [];
+  try { escalacaoAtual = await fetchEscalacao(sumulaMatchId); } catch (e) { console.error(e); }
+
+  const blocoTime = (t) => {
+    if (!t) return '';
+    const jogadores = t.jogadores || [];
+    const titularesCount = escalacaoAtual.filter(e => e.equipe_id === t.id && e.titular).length;
+    return `
+      <div style="margin-bottom:16px;">
+        <p style="font-weight:700; margin-bottom:8px;">${t.nome} <span style="color:var(--text-muted); font-weight:400; font-size:0.78rem;">(${titularesCount}/${cfg.titulares} titulares)</span></p>
+        ${jogadores.map(j => {
+          const atual = escalacaoAtual.find(e => e.jogador_id === j.id);
+          return `
+            <div style="display:flex; align-items:center; gap:8px; padding:6px 0; border-top:1px solid var(--border-soft);">
+              <label style="display:flex; align-items:center; gap:4px; font-size:0.8rem; flex:1;">
+                <input type="checkbox" id="tit_${j.id}" ${atual?.titular ? 'checked' : ''}> ${j.numero ? '#' + j.numero + ' ' : ''}${j.nome}
+              </label>
+              <input type="number" id="nota_${j.id}" class="form-control" style="width:64px;" step="0.1" min="0" max="10" placeholder="Nota" value="${atual?.nota ?? ''}">
+              <button class="btn-secondary" style="padding:6px 10px; font-size:0.75rem;" onclick="saveEscalacaoUI('${j.id}','${t.id}')">Salvar</button>
+            </div>
+          `;
+        }).join('') || '<p style="color:var(--text-muted); font-size:0.8rem;">Sem jogadores cadastrados.</p>'}
+      </div>
+    `;
+  };
+
+  container.innerHTML = blocoTime(tA) + blocoTime(tB);
+}
+
+async function saveEscalacaoUI(jogadorId, equipeId) {
+  const titular = document.getElementById(`tit_${jogadorId}`).checked;
+  const nota = document.getElementById(`nota_${jogadorId}`).value;
+  try {
+    await saveEscalacaoJogador(sumulaMatchId, equipeId, jogadorId, { titular, nota });
+    const tA = teams.find(t => t.id === matches.find(m => m.id === sumulaMatchId)?.equipe_a);
+    const tB = teams.find(t => t.id === matches.find(m => m.id === sumulaMatchId)?.equipe_b);
+    await renderEscalacaoTimes(tA, tB);
+  } catch (e) {
+    alert('Erro: ' + e.message);
+  }
+}
+
+const MODALIDADE_PADRAO_FALLBACK = { modalidade: 'campo', titulares: 11, reservas: 7 };
 
 document.addEventListener('DOMContentLoaded', initAdmin);

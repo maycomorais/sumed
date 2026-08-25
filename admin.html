@@ -32,7 +32,7 @@
   <div class="container" style="padding-top:0;">
 
     <!-- SORTEIO -->
-    <section id="screen-sorteio" class="screen active">
+    <section id="screen-sorteio" class="screen">
       <p class="section-label">Sorteio & Rodadas</p>
       <p class="section-sub">Geração automática do calendário — todos contra todos.</p>
 
@@ -51,10 +51,13 @@
         <div class="card-title">Equipes na categoria</div>
         <div id="admin-teams-summary"></div>
       </div>
+
+      <div class="card-title" style="margin-top:6px;">Calendário Completo</div>
+      <div id="admin-calendario-completo"></div>
     </section>
 
     <!-- PLACAR (lançar resultado + editar data/hora/local, unificado) -->
-    <section id="screen-placar" class="screen">
+    <section id="screen-placar" class="screen active">
       <p class="section-label">Lançar Placar</p>
       <p class="section-sub">Resultado, data, horário e local — tudo em um só lugar.</p>
 
@@ -104,11 +107,15 @@
 
           <div class="form-group">
             <label>Jogadores</label>
+            <p class="min-jogadores-note" id="min-jogadores-note"></p>
             <div id="jogadores-list"></div>
-            <button type="button" class="btn-secondary" onclick="addJogadorRow()">+ Adicionar Jogador</button>
+            <button type="button" class="btn-secondary" id="btn-add-jogador-row" onclick="addJogadorRow()">+ Adicionar Linha de Jogador</button>
           </div>
 
-          <button type="submit" class="btn-action" id="btn-salvar-equipe" style="margin-top:10px; width:100%;">Salvar Equipe</button>
+          <div style="display:flex; gap:8px; margin-top:10px;">
+            <button type="submit" class="btn-action" id="btn-salvar-equipe" style="flex:1;">Salvar Equipe</button>
+            <button type="button" class="btn-secondary" id="btn-cancelar-edicao" style="display:none;" onclick="cancelEditTeam()">Cancelar</button>
+          </div>
         </form>
       </div>
 
@@ -176,6 +183,11 @@
     <section id="screen-mais" class="screen">
       <p class="section-label">Mais</p>
 
+      <div class="menu-list-item" onclick="switchAdminScreen('formato')">
+        <div class="quick-icon">🎽</div>
+        <div class="quick-body"><div class="quick-title">Formato do Campeonato</div></div>
+        <div class="quick-arrow">↗</div>
+      </div>
       <div class="menu-list-item" onclick="switchAdminScreen('patrocinadores')">
         <div class="quick-icon">💰</div>
         <div class="quick-body"><div class="quick-title">Patrocinadores</div></div>
@@ -194,6 +206,37 @@
       <div class="menu-list-item" onclick="logout()">
         <div class="quick-icon">⎋</div>
         <div class="quick-body"><div class="quick-title">Sair</div></div>
+      </div>
+    </section>
+
+    <!-- FORMATO DO CAMPEONATO -->
+    <section id="screen-formato" class="screen">
+      <div style="display:flex; align-items:center; gap:10px; margin-bottom:14px;">
+        <button class="topbar-back" onclick="switchAdminScreen('mais')">←</button>
+        <span class="section-label" style="margin:0;">Formato do Campeonato</span>
+      </div>
+      <p class="section-sub">Categoria: <b id="formato-categoria-label"></b></p>
+
+      <div class="card">
+        <form id="form-formato" onsubmit="saveFormato(event)">
+          <div class="form-group">
+            <label>Modalidade</label>
+            <select id="formato-modalidade" class="form-control">
+              <option value="campo">Campo (11 jogadores)</option>
+              <option value="quadra">Quadra (5 jogadores)</option>
+              <option value="society">Society (5, 6 ou 7 jogadores)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Titulares</label>
+            <input type="number" id="formato-titulares" class="form-control" min="1" max="11" required>
+          </div>
+          <div class="form-group">
+            <label>Reservas</label>
+            <input type="number" id="formato-reservas" class="form-control" min="0" max="15" required>
+          </div>
+          <button type="submit" class="btn-action" style="width:100%;">Salvar Formato</button>
+        </form>
       </div>
     </section>
 
@@ -276,13 +319,115 @@
       </div>
     </section>
 
+    <!-- SÚMULA COMPLETA DE UMA PARTIDA -->
+    <section id="screen-sumula-admin" class="screen">
+      <div style="display:flex; align-items:center; gap:10px; margin-bottom:14px;">
+        <button class="topbar-back" onclick="switchAdminScreen('placar')">←</button>
+        <span class="section-label" style="margin:0;" id="sumula-admin-title">Súmula</span>
+      </div>
+
+      <div class="card" style="border-color: var(--danger-strong);">
+        <div class="card-title">🔴 Transmissão Ao Vivo</div>
+        <label style="display:flex; align-items:center; gap:8px; font-size:0.85rem; margin-bottom:12px;">
+          <input type="checkbox" id="chk-ao-vivo" onchange="toggleAoVivoUI(this.checked)"> Esta partida está rolando agora
+        </label>
+        <div id="wrap-placar-ao-vivo" style="display:none; margin-bottom:12px;">
+          <div style="display:flex; align-items:center; justify-content:space-around; gap:10px;">
+            <div style="text-align:center;">
+              <div id="live-nome-a" style="font-size:0.78rem; font-weight:700; margin-bottom:6px;"></div>
+              <div style="display:flex; align-items:center; gap:8px;">
+                <button class="btn-secondary" onclick="ajustarPlacarAoVivo('a',-1)">−</button>
+                <span id="live-score-a" style="font-size:1.3rem; font-weight:800; min-width:24px;">0</span>
+                <button class="btn-secondary" onclick="ajustarPlacarAoVivo('a',1)">+</button>
+              </div>
+            </div>
+            <div style="text-align:center;">
+              <div id="live-nome-b" style="font-size:0.78rem; font-weight:700; margin-bottom:6px;"></div>
+              <div style="display:flex; align-items:center; gap:8px;">
+                <button class="btn-secondary" onclick="ajustarPlacarAoVivo('b',-1)">−</button>
+                <span id="live-score-b" style="font-size:1.3rem; font-weight:800; min-width:24px;">0</span>
+                <button class="btn-secondary" onclick="ajustarPlacarAoVivo('b',1)">+</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Link da transmissão (Instagram, YouTube, Facebook...)</label>
+          <input type="url" id="link-transmissao" class="form-control" placeholder="https://instagram.com/...">
+        </div>
+        <button class="btn-secondary" style="width:100%;" onclick="salvarLinkTransmissaoUI()">Salvar Link</button>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Prorrogação & Pênaltis</div>
+        <label style="display:flex; align-items:center; gap:8px; font-size:0.85rem; margin-bottom:10px;">
+          <input type="checkbox" id="chk-prorrogacao" onchange="toggleFlagUI('teve_prorrogacao', this.checked)"> Partida teve prorrogação
+        </label>
+        <label style="display:flex; align-items:center; gap:8px; font-size:0.85rem;">
+          <input type="checkbox" id="chk-penaltis" onchange="toggleFlagUI('teve_penaltis', this.checked); toggleWrap('wrap-penaltis', this.checked)"> Partida teve disputa de pênaltis
+        </label>
+
+        <div id="wrap-penaltis" style="display:none; margin-top:14px;">
+          <div style="display:grid; grid-template-columns:1fr 1fr auto auto; gap:8px; align-items:center;">
+            <select id="pen-equipe" class="form-control"></select>
+            <select id="pen-jogador" class="form-control"></select>
+            <input type="number" id="pen-ordem" class="form-control" placeholder="Ordem" style="width:70px;">
+            <label style="display:flex; align-items:center; gap:4px; font-size:0.75rem;"><input type="checkbox" id="pen-convertido" checked> ✓</label>
+          </div>
+          <button class="btn-secondary" style="margin-top:8px;" onclick="addPenaltiUI()">+ Cobrança</button>
+          <div id="admin-penaltis-list" style="margin-top:10px;"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">⚽ Gols</div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+          <select id="gol-equipe" class="form-control" onchange="populateJogadoresDoSelect('gol-equipe','gol-jogador')"></select>
+          <select id="gol-jogador" class="form-control"></select>
+        </div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px;">
+          <input type="number" id="gol-minuto" class="form-control" placeholder="Minuto">
+          <select id="gol-tipo" class="form-control">
+            <option value="normal">Tempo normal</option>
+            <option value="prorrogacao">Prorrogação</option>
+          </select>
+        </div>
+        <button class="btn-secondary" style="margin-top:8px;" onclick="addGolUI()">+ Gol</button>
+        <div id="admin-gols-list" style="margin-top:10px;"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">🔄 Substituições</div>
+        <select id="sub-equipe" class="form-control" onchange="populateSubstituicaoSelects()"></select>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px;">
+          <select id="sub-sai" class="form-control"></select>
+          <select id="sub-entra" class="form-control"></select>
+        </div>
+        <input type="number" id="sub-minuto" class="form-control" placeholder="Minuto" style="margin-top:8px;">
+        <button class="btn-secondary" style="margin-top:8px;" onclick="addSubstituicaoUI()">+ Substituição</button>
+        <div id="admin-substituicoes-list" style="margin-top:10px;"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">📝 Escalação & Notas</div>
+        <p style="color:var(--text-muted); font-size:0.78rem; margin-bottom:10px;">Marque os titulares (limite configurado em "Formato do Campeonato") e lance a nota de cada jogador ao fim da partida.</p>
+        <div id="admin-escalacao-times"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">🟨 Cartões</div>
+        <p style="color:var(--text-muted); font-size:0.85rem;">Cartões e outras ocorrências disciplinares são lançados na aba <b>Disciplina</b>, já vinculáveis a esta partida.</p>
+        <button class="btn-secondary" style="margin-top:8px;" onclick="switchAdminScreen('disciplina')">Ir para Disciplina →</button>
+      </div>
+    </section>
+
   </div>
 
   <nav class="bottom-nav">
-    <button class="bottom-nav-item active" data-screen="sorteio" onclick="switchAdminScreen('sorteio')">
+    <button class="bottom-nav-item" data-screen="sorteio" onclick="switchAdminScreen('sorteio')">
       <span class="icon">🎲</span><span>Sorteio</span>
     </button>
-    <button class="bottom-nav-item" data-screen="placar" onclick="switchAdminScreen('placar')">
+    <button class="bottom-nav-item active" data-screen="placar" onclick="switchAdminScreen('placar')">
       <span class="icon">⚽</span><span>Placar</span>
     </button>
     <button class="bottom-nav-item" data-screen="equipes" onclick="switchAdminScreen('equipes')">

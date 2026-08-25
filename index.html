@@ -31,8 +31,18 @@
     <section id="screen-home" class="screen active">
       <div class="pill-toggle" data-categoria-toggle></div>
 
-      <p class="section-sub" style="margin-top:8px;">Próxima Rodada</p>
-      <div class="card card-accent hero-card" id="hero-next-match"></div>
+      <div class="sponsors-block" id="sponsors-block"></div>
+
+      <div class="round-selector" id="hero-round-selector" style="margin-top:8px;">
+        <button class="round-btn" onclick="changeHeroRound(-1)">❮</button>
+        <span id="proxima-rodada-label" style="font-weight:800; color:var(--gold-bright);">Próxima Rodada</span>
+        <button class="round-btn" onclick="changeHeroRound(1)">❯</button>
+      </div>
+      <div class="hero-carousel-wrap">
+        <button class="hero-carousel-arrow left" onclick="scrollHeroCarousel(-1)" aria-label="Anterior">‹</button>
+        <div class="hero-carousel" id="hero-carousel"></div>
+        <button class="hero-carousel-arrow right" onclick="scrollHeroCarousel(1)" aria-label="Próximo">›</button>
+      </div>
 
       <div class="card quick-card" onclick="switchScreen('tabela')">
         <div class="quick-icon">📊</div>
@@ -51,8 +61,6 @@
         </div>
         <div class="quick-arrow">↗</div>
       </div>
-
-      <div class="sponsors-block" id="sponsors-block"></div>
     </section>
 
     <!-- RODADAS (acessado via Home) -->
@@ -69,6 +77,21 @@
       </div>
       <div id="matches-container"></div>
       <div id="bye-container"></div>
+
+      <div class="card-title" style="margin-top:20px;">⭐ Seleção da Rodada</div>
+      <div id="selecao-rodada" class="teams-grid" style="grid-template-columns: repeat(2,1fr);"></div>
+
+      <div class="card-title" style="margin-top:20px;">🪵 Pernas de Pau da Rodada</div>
+      <div id="pernas-pau-rodada"></div>
+
+      <div class="card quick-card" onclick="openSelecaoCampeonato()" style="margin-top:16px;">
+        <div class="quick-icon">🏅</div>
+        <div class="quick-body">
+          <div class="quick-title">Seleção do Campeonato</div>
+          <div class="quick-sub">Acumulado da temporada — melhores e piores.</div>
+        </div>
+        <div class="quick-arrow">↗</div>
+      </div>
     </section>
 
     <!-- TABELA -->
@@ -131,6 +154,9 @@
     </section>
 
   </div>
+
+  <!-- CARD FLUTUANTE DE PLACAR AO VIVO -->
+  <div id="live-widget" class="live-widget" style="display:none;"></div>
 
   <nav class="bottom-nav">
     <button class="bottom-nav-item active" data-screen="home" onclick="switchScreen('home')">

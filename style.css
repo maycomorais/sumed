@@ -126,9 +126,9 @@ h1, h2, h3, h4, .headline { font-family: 'Montserrat', 'Segoe UI', sans-serif; f
 .sponsor-card {
   flex: 0 0 auto; width: 150px; height: 64px; background: var(--surface);
   border: 1px solid var(--border-soft); border-radius: var(--radius-md);
-  display: flex; align-items: center; justify-content: center; padding: 10px;
+  overflow: hidden; display: block;
 }
-.sponsor-card img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.sponsor-card img { width: 100%; height: 100%; object-fit: cover; display: block; }
 
 /* ---------------------------------------------------------------------
    TABELA (classificação)
@@ -274,3 +274,128 @@ tr.zone-elim td:nth-child(2) { text-decoration: line-through; }
   padding: 3px 10px; border-radius: 999px; font-size: 0.68rem; font-weight: 700; text-transform: uppercase;
 }
 
+
+/* =====================================================================
+   ESCALAÇÃO EM CAMPO (pitch visual com fotos por posição)
+   ===================================================================== */
+.pitch-formation-label { text-align:center; color:var(--text-muted); font-size:0.72rem; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:8px; }
+.pitch {
+  position: relative;
+  background: repeating-linear-gradient(180deg, #1f6b3a 0px, #1f6b3a 36px, #235f38 36px, #235f38 72px);
+  border-radius: var(--radius-md);
+  border: 2px solid rgba(255,255,255,0.2);
+  padding: 16px 6px;
+  display: flex; flex-direction: column; justify-content: space-between; gap: 14px;
+  min-height: 380px;
+  overflow: hidden;
+}
+.pitch::before { content: ''; position: absolute; top: 50%; left: 4%; right: 4%; height: 1px; background: rgba(255,255,255,0.28); }
+.pitch::after {
+  content: ''; position: absolute; top: 50%; left: 50%; width: 64px; height: 64px;
+  margin: -32px 0 0 -32px; border: 1px solid rgba(255,255,255,0.28); border-radius: 50%;
+}
+.pitch-goal-box {
+  position: absolute; left: 50%; width: 100px; height: 34px; margin-left: -50px;
+  border: 1px solid rgba(255,255,255,0.28); border-top: none; z-index: 0;
+}
+.pitch-goal-box.top { top: 0; border-top: none; border-bottom: 1px solid rgba(255,255,255,0.28); }
+.pitch-goal-box.bottom { bottom: 0; }
+.pitch-line { display: flex; justify-content: space-around; align-items: flex-start; position: relative; z-index: 1; }
+.pitch-player { display: flex; flex-direction: column; align-items: center; width: 58px; text-align: center; position: relative; }
+.pitch-player-avatar {
+  width: 38px; height: 38px; border-radius: 50%; background: var(--surface-high);
+  border: 2px solid #fff; overflow: hidden; display: flex; align-items: center;
+  justify-content: center; font-size: 0.68rem; font-weight: 800; color: var(--text);
+}
+.pitch-player-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.pitch-player-name { font-size: 0.6rem; font-weight: 700; color: #fff; margin-top: 3px; line-height: 1.15; text-shadow: 0 1px 3px rgba(0,0,0,0.7); }
+.pitch-player-badges { position: absolute; top: -4px; right: 2px; display: flex; gap: 1px; font-size: 0.55rem; }
+.pitch-player-nota {
+  position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
+  background: var(--gold); color: var(--bg); font-size: 0.6rem; font-weight: 800;
+  padding: 1px 4px; border-radius: 3px; line-height: 1.2;
+}
+.pitch-reserves { margin-top: 4px; }
+.pitch-reserves-label { color: var(--text-muted); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; margin: 10px 0 6px; }
+
+/* =====================================================================
+   CARD DE JOGADOR (cadastro/edição de elenco) — layout empilhado,
+   confortável em telas estreitas, em vez de tudo numa linha só.
+   ===================================================================== */
+.jogador-card {
+  background: var(--bg); border: 1px solid var(--border-soft); border-radius: var(--radius-md);
+  padding: 12px; margin-bottom: 10px;
+}
+.jogador-card.novo { border-color: var(--gold); border-style: dashed; }
+.jogador-card-header { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.jogador-card-avatar {
+  width: 46px; height: 46px; border-radius: 50%; object-fit: cover;
+  background: var(--surface-high); border: 1px solid var(--border); flex-shrink: 0;
+}
+.jogador-card-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
+.jogador-card-file { margin-bottom: 10px; }
+.jogador-card-file label {
+  display: block; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--text-muted); margin-bottom: 5px;
+}
+.jogador-card-actions { display: flex; gap: 8px; }
+.jogador-card-actions .btn-action, .jogador-card-actions .btn-secondary { flex: 1; }
+.jogador-card-actions .btn-remove { flex: 0 0 auto; }
+.min-jogadores-note { color: var(--text-muted); font-size: 0.78rem; margin-bottom: 10px; }
+.min-jogadores-note.atendido { color: var(--gold); }
+
+/* =====================================================================
+   CARROSSEL "PRÓXIMA RODADA" — um card por partida, com escalação
+   ===================================================================== */
+.hero-carousel {
+  display: flex; gap: 12px; overflow-x: auto; scroll-snap-type: x mandatory;
+  padding-bottom: 6px; margin-bottom: 16px; -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.hero-carousel::-webkit-scrollbar { display: none; }
+.hero-carousel-wrap { position: relative; }
+.hero-carousel-arrow {
+  position: absolute; top: 50%; transform: translateY(-50%); z-index: 5;
+  width: 32px; height: 32px; border-radius: 50%; background: rgba(17,20,21,0.85);
+  border: 1px solid var(--border); color: var(--text); font-size: 1.1rem; line-height: 1;
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+}
+.hero-carousel-arrow.left { left: -4px; }
+.hero-carousel-arrow.right { right: -4px; }
+.hero-carousel-arrow:hover { border-color: var(--gold); color: var(--gold); }
+.hero-carousel .hero-card {
+  flex: 0 0 88%; scroll-snap-align: center; margin-bottom: 0;
+}
+.hero-lineup-badge {
+  display: inline-flex; align-items: center; gap: 4px; font-size: 0.7rem;
+  color: var(--text-muted); background: var(--surface-high); padding: 4px 10px;
+  border-radius: 999px; margin-top: 10px;
+}
+.hero-lineup-badge.pronta { color: var(--gold); }
+.hero-live-tag {
+  display: inline-flex; align-items: center; gap: 4px; background: var(--danger-strong);
+  color: #fff; font-size: 0.66rem; font-weight: 800; padding: 3px 8px; border-radius: 999px;
+  text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 8px;
+}
+.hero-live-tag .dot { width: 6px; height: 6px; border-radius: 50%; background: #fff; animation: live-pulse 1.2s infinite; }
+@keyframes live-pulse { 0%,100% { opacity:1; } 50% { opacity:0.3; } }
+
+/* =====================================================================
+   CARD FLUTUANTE — placar ao vivo (tipo "picture-in-picture")
+   ===================================================================== */
+.live-widget {
+  position: fixed; right: 12px; bottom: calc(76px + env(safe-area-inset-bottom));
+  z-index: 90; width: 220px; background: var(--surface); border: 1px solid var(--danger-strong);
+  border-radius: var(--radius-md); padding: 10px 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+}
+.live-widget-close {
+  position: absolute; top: -8px; right: -8px; width: 22px; height: 22px; border-radius: 50%;
+  background: var(--surface-high); border: 1px solid var(--border); color: var(--text);
+  font-size: 0.75rem; cursor: pointer; display: flex; align-items: center; justify-content: center;
+}
+.live-widget-teams { display: flex; align-items: center; justify-content: space-between; font-size: 0.78rem; font-weight: 700; margin-top: 4px; }
+.live-widget-score { font-size: 1.3rem; font-weight: 800; color: var(--gold-bright); text-align: center; margin: 4px 0; }
+.live-widget-link {
+  display: block; text-align: center; margin-top: 8px; background: var(--danger-strong); color: #fff;
+  font-size: 0.72rem; font-weight: 700; padding: 6px; border-radius: var(--radius-sm); text-decoration: none;
+}

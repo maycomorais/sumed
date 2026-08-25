@@ -4,21 +4,71 @@
 // =====================================================================
 
 // ---------------------------------------------------------------------
-// Upload genérico de imagem. Retorna a URL pública ou lança erro.
+// UPLOAD DE IMAGEM — ImgBB (com conversão para WebP antes do envio)
 // ---------------------------------------------------------------------
-async function uploadImage(bucket, path, file) {
-  const { error } = await sb.storage.from(bucket).upload(path, file, {
-    upsert: true,
-    cacheControl: '3600',
+// ⚠️ Esta chave fica exposta no código do cliente por natureza do ImgBB
+// (não existe modo "server-only" nesse serviço). Se quiser trocar a
+// chave, é só substituir a constante abaixo.
+const IMGBB_API_KEY = 'd6ade30e77d706a440f7c03f08af33c4';
+
+function convertToWebP(file, quality = 80) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Falha ao ler o arquivo de imagem.'));
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onerror = () => reject(new Error('Falha ao carregar a imagem para conversão.'));
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        canvas.toBlob(
+          (blob) => (blob ? resolve(blob) : reject(new Error('Falha ao converter imagem para WebP.'))),
+          'image/webp',
+          quality / 100
+        );
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
   });
-  if (error) throw error;
-  const { data } = sb.storage.from(bucket).getPublicUrl(path);
-  return data.publicUrl;
 }
 
-function extensionOf(file) {
-  const parts = file.name.split('.');
-  return parts.length > 1 ? parts.pop().toLowerCase() : 'jpg';
+/**
+ * Envia uma imagem para o ImgBB (convertendo para WebP antes) e retorna a URL direta.
+ * @param {File} file
+ * @param {number} quality - Qualidade WebP (0-100), padrão 80
+ * @returns {Promise<string>}
+ */
+async function uploadImageToImgbb(file, quality = 80) {
+  const tiposPermitidos = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+  if (!tiposPermitidos.includes(file.type)) {
+    throw new Error('Formato inválido. Use JPG, PNG, WEBP ou GIF.');
+  }
+  if (file.size > 10 * 1024 * 1024) {
+    throw new Error('Imagem muito grande. Máximo 10MB (limite do ImgBB).');
+  }
+
+  const webpBlob = await convertToWebP(file, quality);
+
+  const formData = new FormData();
+  formData.append('key', IMGBB_API_KEY);
+  formData.append('image', webpBlob, 'image.webp');
+  formData.append('name', file.name.replace(/\.[^.]+$/, '.webp'));
+
+  const response = await fetch('https://api.imgbb.com/1/upload', {
+    method: 'POST',
+    body: formData,
+  });
+
+  const data = await response.json();
+  if (!data.success) {
+    throw new Error(`ImgBB: ${data.error?.message || 'Erro desconhecido'}`);
+  }
+
+  return data.data.url;
 }
 
 // ---------------------------------------------------------------------
@@ -37,6 +87,8 @@ async function fetchTeams(categoria) {
 
 // escudoFile é opcional (File do <input type="file">)
 async function createTeam({ nome, presidente, capitao, comissao_tecnica, diretor_marketing, categoria, escudoFile, jogadores }) {
+  const escudo_url = escudoFile ? await uploadImageToImgbb(escudoFile) : null;
+
   const { data: equipe, error } = await sb
     .from('equipes')
     .insert({
@@ -46,17 +98,11 @@ async function createTeam({ nome, presidente, capitao, comissao_tecnica, diretor
       comissao_tecnica: comissao_tecnica || 'A definir',
       diretor_marketing: diretor_marketing || 'A definir',
       categoria: categoria || 'masculino',
+      escudo_url,
     })
     .select()
     .single();
   if (error) throw error;
-
-  if (escudoFile) {
-    const path = `${equipe.id}.${extensionOf(escudoFile)}`;
-    const url = await uploadImage('escudos', path, escudoFile);
-    await sb.from('equipes').update({ escudo_url: url }).eq('id', equipe.id);
-    equipe.escudo_url = url;
-  }
 
   if (jogadores && jogadores.length) {
     for (const j of jogadores) {
@@ -68,19 +114,14 @@ async function createTeam({ nome, presidente, capitao, comissao_tecnica, diretor
 }
 
 async function addJogador(equipeId, { nome, numero, posicao, fotoFile }) {
+  const foto_url = fotoFile ? await uploadImageToImgbb(fotoFile) : null;
+
   const { data: jogador, error } = await sb
     .from('jogadores')
-    .insert({ equipe_id: equipeId, nome, numero: numero || null, posicao: posicao || null })
+    .insert({ equipe_id: equipeId, nome, numero: numero || null, posicao: posicao || null, foto_url })
     .select()
     .single();
   if (error) throw error;
-
-  if (fotoFile) {
-    const path = `${jogador.id}.${extensionOf(fotoFile)}`;
-    const url = await uploadImage('jogadores', path, fotoFile);
-    await sb.from('jogadores').update({ foto_url: url }).eq('id', jogador.id);
-    jogador.foto_url = url;
-  }
   return jogador;
 }
 
@@ -193,17 +234,14 @@ async function fetchAllSponsors() {
 }
 
 async function createSponsor({ nome, link, ordem, logoFile }) {
+  const logo_url = await uploadImageToImgbb(logoFile);
+
   const { data: sponsor, error } = await sb
     .from('patrocinadores')
-    .insert({ nome, link: link || null, ordem: ordem || 0, logo_url: '' })
+    .insert({ nome, link: link || null, ordem: ordem || 0, logo_url })
     .select()
     .single();
   if (error) throw error;
-
-  const path = `${sponsor.id}.${extensionOf(logoFile)}`;
-  const url = await uploadImage('patrocinadores', path, logoFile);
-  await sb.from('patrocinadores').update({ logo_url: url }).eq('id', sponsor.id);
-  sponsor.logo_url = url;
   return sponsor;
 }
 
@@ -275,4 +313,223 @@ async function toggleEventoCumprida(id, cumprida) {
 async function deleteEvento(id) {
   const { error } = await sb.from('eventos_disciplinares').delete().eq('id', id);
   if (error) throw error;
+}
+
+// ---------------------------------------------------------------------
+// EDIÇÃO DE EQUIPE
+// ---------------------------------------------------------------------
+async function updateTeam(teamId, { nome, presidente, capitao, comissao_tecnica, diretor_marketing, escudoFile }) {
+  const payload = { nome, presidente, capitao, comissao_tecnica, diretor_marketing };
+  const { error } = await sb.from('equipes').update(payload).eq('id', teamId);
+  if (error) throw error;
+
+  if (escudoFile) {
+    const url = await uploadImageToImgbb(escudoFile);
+    await sb.from('equipes').update({ escudo_url: url }).eq('id', teamId);
+    return url;
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------
+// FORMATO DO CAMPEONATO (Campo/Quadra/Society) POR CATEGORIA
+// ---------------------------------------------------------------------
+const MODALIDADE_PADRAO = { modalidade: 'campo', titulares: 11, reservas: 7 };
+
+async function fetchModalidade(categoria) {
+  return fetchConfig(`modalidade_${categoria}`, MODALIDADE_PADRAO);
+}
+
+async function saveModalidade(categoria, { modalidade, titulares, reservas }) {
+  await saveConfig(`modalidade_${categoria}`, { modalidade, titulares: Number(titulares), reservas: Number(reservas) });
+}
+
+// ---------------------------------------------------------------------
+// ESCALAÇÃO (titular/reserva + nota)
+// ---------------------------------------------------------------------
+async function fetchEscalacao(partidaId) {
+  const { data, error } = await sb
+    .from('escalacoes')
+    .select('*, jogadores(nome, numero, posicao, foto_url)')
+    .eq('partida_id', partidaId);
+  if (error) throw error;
+  return data;
+}
+
+async function saveEscalacaoJogador(partidaId, equipeId, jogadorId, { titular, nota }) {
+  const { error } = await sb.from('escalacoes').upsert({
+    partida_id: partidaId,
+    equipe_id: equipeId,
+    jogador_id: jogadorId,
+    titular,
+    nota: nota === '' || nota === null || nota === undefined ? null : Number(nota),
+  }, { onConflict: 'partida_id,jogador_id' });
+  if (error) throw error;
+}
+
+async function removeEscalacaoJogador(partidaId, jogadorId) {
+  const { error } = await sb.from('escalacoes').delete().eq('partida_id', partidaId).eq('jogador_id', jogadorId);
+  if (error) throw error;
+}
+
+// ---------------------------------------------------------------------
+// GOLS
+// ---------------------------------------------------------------------
+async function fetchGols(partidaId) {
+  const { data, error } = await sb
+    .from('gols')
+    .select('*, jogadores(nome), equipes(nome)')
+    .eq('partida_id', partidaId)
+    .order('minuto');
+  if (error) throw error;
+  return data;
+}
+
+async function createGol({ partida_id, jogador_id, equipe_id, minuto, tipo }) {
+  const { error } = await sb.from('gols').insert({
+    partida_id, jogador_id, equipe_id, minuto: minuto || null, tipo: tipo || 'normal',
+  });
+  if (error) throw error;
+}
+
+async function deleteGol(id) {
+  const { error } = await sb.from('gols').delete().eq('id', id);
+  if (error) throw error;
+}
+
+// ---------------------------------------------------------------------
+// SUBSTITUIÇÕES
+// ---------------------------------------------------------------------
+async function fetchSubstituicoes(partidaId) {
+  const { data, error } = await sb
+    .from('substituicoes')
+    .select('*, saiu:jogador_sai_id(nome), entra:jogador_entra_id(nome), equipes(nome)')
+    .eq('partida_id', partidaId)
+    .order('minuto');
+  if (error) throw error;
+  return data;
+}
+
+async function createSubstituicao({ partida_id, equipe_id, jogador_sai_id, jogador_entra_id, minuto }) {
+  const { error } = await sb.from('substituicoes').insert({
+    partida_id, equipe_id, jogador_sai_id, jogador_entra_id, minuto: minuto || null,
+  });
+  if (error) throw error;
+}
+
+async function deleteSubstituicao(id) {
+  const { error } = await sb.from('substituicoes').delete().eq('id', id);
+  if (error) throw error;
+}
+
+// ---------------------------------------------------------------------
+// PRORROGAÇÃO / PÊNALTIS
+// ---------------------------------------------------------------------
+async function updatePartidaFlags(matchId, { teve_prorrogacao, teve_penaltis }) {
+  const payload = {};
+  if (teve_prorrogacao !== undefined) payload.teve_prorrogacao = teve_prorrogacao;
+  if (teve_penaltis !== undefined) payload.teve_penaltis = teve_penaltis;
+  const { error } = await sb.from('partidas').update(payload).eq('id', matchId);
+  if (error) throw error;
+}
+
+async function fetchPenaltis(partidaId) {
+  const { data, error } = await sb
+    .from('penaltis_cobrancas')
+    .select('*, jogadores(nome), equipes(nome)')
+    .eq('partida_id', partidaId)
+    .order('ordem');
+  if (error) throw error;
+  return data;
+}
+
+async function createPenaltiCobranca({ partida_id, equipe_id, jogador_id, ordem, convertido }) {
+  const { error } = await sb.from('penaltis_cobrancas').insert({
+    partida_id, equipe_id, jogador_id, ordem, convertido,
+  });
+  if (error) throw error;
+}
+
+async function deletePenaltiCobranca(id) {
+  const { error } = await sb.from('penaltis_cobrancas').delete().eq('id', id);
+  if (error) throw error;
+}
+
+// ---------------------------------------------------------------------
+// SELEÇÃO DA RODADA / PERNAS DE PAU (calculado a partir das notas)
+// ---------------------------------------------------------------------
+// Retorna todas as escalações com nota, de todas as partidas de uma
+// categoria, já com jogador/posição/equipe/rodada — a agregação por
+// rodada (melhor por posição, pior geral) é feita no cliente (index.js),
+// já que o volume de dados é pequeno o suficiente pra não precisar de
+// uma view SQL dedicada.
+async function fetchEscalacoesDaCategoria(categoria) {
+  const { data, error } = await sb
+    .from('escalacoes')
+    .select('*, jogadores(nome, posicao, foto_url), equipes(nome, categoria), partidas!inner(rodada, categoria)')
+    .not('nota', 'is', null)
+    .eq('partidas.categoria', categoria);
+  if (error) throw error;
+  return data;
+}
+
+async function updateJogador(jogadorId, { nome, numero, posicao, fotoFile }) {
+  const payload = {};
+  if (nome !== undefined) payload.nome = nome;
+  if (numero !== undefined) payload.numero = numero === '' ? null : Number(numero);
+  if (posicao !== undefined) payload.posicao = posicao || null;
+  const { error } = await sb.from('jogadores').update(payload).eq('id', jogadorId);
+  if (error) throw error;
+
+  if (fotoFile) {
+    const url = await uploadImageToImgbb(fotoFile);
+    await sb.from('jogadores').update({ foto_url: url }).eq('id', jogadorId);
+  }
+}
+
+// ---------------------------------------------------------------------
+// TRANSMISSÃO AO VIVO
+// ---------------------------------------------------------------------
+async function setMatchLive(matchId, aoVivo) {
+  const payload = { status: aoVivo ? 'LIVE' : 'SCHEDULED' };
+  const { error } = await sb.from('partidas').update(payload).eq('id', matchId);
+  if (error) throw error;
+}
+
+async function finalizarPartidaAoVivo(matchId) {
+  const { error } = await sb.from('partidas').update({ status: 'FINISHED' }).eq('id', matchId);
+  if (error) throw error;
+}
+
+async function saveLinkTransmissao(matchId, link) {
+  const { error } = await sb.from('partidas').update({ link_transmissao: link || null }).eq('id', matchId);
+  if (error) throw error;
+}
+
+// Atualiza só o placar, sem mexer no status — usado durante o "Ao Vivo",
+// onde o status continua 'LIVE' mesmo com placar mudando gol a gol.
+async function updateLiveScore(matchId, scoreA, scoreB) {
+  const { error } = await sb.from('partidas').update({ placar_a: scoreA, placar_b: scoreB }).eq('id', matchId);
+  if (error) throw error;
+}
+
+async function fetchLiveMatch(categoria) {
+  const { data, error } = await sb
+    .from('partidas')
+    .select('*')
+    .eq('categoria', categoria)
+    .eq('status', 'LIVE')
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+// Assina atualizações em tempo real de UMA partida. Retorna o channel —
+// guarde a referência e chame sb.removeChannel(channel) ao desmontar.
+function subscribeToMatch(matchId, onUpdate) {
+  return sb
+    .channel(`partida-${matchId}`)
+    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'partidas', filter: `id=eq.${matchId}` }, (payload) => onUpdate(payload.new))
+    .subscribe();
 }
