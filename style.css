@@ -318,6 +318,11 @@ tr.zone-elim td:nth-child(2) { text-decoration: line-through; }
 }
 .pitch-reserves { margin-top: 4px; }
 .pitch-reserves-label { color: var(--text-muted); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; margin: 10px 0 6px; }
+.pitch-dual { min-height: 460px; }
+.pitch-center-line { height: 1px; background: rgba(255,255,255,0.35); margin: 4px 0; position: relative; z-index: 1; }
+.pitch-empty-msg { color: rgba(255,255,255,0.55); font-size: 0.78rem; text-align: center; padding: 10px 0; position: relative; z-index: 1; }
+.pitch-player { cursor: pointer; }
+.pitch-player-team { font-size: 0.55rem; color: rgba(255,255,255,0.65); margin-top: 1px; }
 
 /* =====================================================================
    CARD DE JOGADOR (cadastro/edição de elenco) — layout empilhado,

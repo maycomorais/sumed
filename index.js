@@ -191,7 +191,7 @@ async function setCategoria(categoria) {
   state.categoria = categoria;
   state.selectedRound = 1;
   state.heroRound = null;
-  state._escalacoesCache = null;
+  state._selecaoCache = null;
   liveDismissed = false;
   if (liveChannel) { sb.removeChannel(liveChannel); liveChannel = null; }
   if (liveEventsChannel) { sb.removeChannel(liveEventsChannel); liveEventsChannel = null; }
@@ -274,12 +274,12 @@ async function renderHero() {
         ${aoVivo ? `<div class="hero-live-tag"><span class="dot"></span> Ao Vivo</div>` : ''}
         <div class="hero-vs">
           <div class="hero-team">
-            <div class="hero-shield">${teamA?.escudo_url ? `<img src="${teamA.escudo_url}">` : '⚽'}</div>
-            <div class="hero-team-name">${teamA?.nome || 'A definir'}</div>
+            <div class="hero-shield" style="cursor:pointer;" onclick="openTeamProfile('${teamA?.id}')">${teamA?.escudo_url ? `<img src="${teamA.escudo_url}">` : '⚽'}</div>
+            <div class="hero-team-name" style="cursor:pointer;" onclick="openTeamProfile('${teamA?.id}')">${teamA?.nome || 'A definir'}</div>
           </div>
           <div class="hero-team">
-            <div class="hero-shield">${teamB?.escudo_url ? `<img src="${teamB.escudo_url}">` : '🏁'}</div>
-            <div class="hero-team-name">${teamB?.nome || 'A definir'}</div>
+            <div class="hero-shield" style="cursor:pointer;" onclick="openTeamProfile('${teamB?.id}')">${teamB?.escudo_url ? `<img src="${teamB.escudo_url}">` : '🏁'}</div>
+            <div class="hero-team-name" style="cursor:pointer;" onclick="openTeamProfile('${teamB?.id}')">${teamB?.nome || 'A definir'}</div>
           </div>
         </div>
         <div class="hero-meta">${aoVivo ? `${m.placar_a ?? 0} × ${m.placar_b ?? 0}` : (m.data ? formatDate(m.data) : 'Data a definir')}${!aoVivo && m.hora ? ', ' + m.hora : ''}</div>
@@ -357,8 +357,10 @@ function renderRodadas() {
       byeTeam = state.teams.find(x => x.id === m.equipe_a)?.nome || 'Equipe';
       return;
     }
-    const teamA = state.teams.find(t => t.id === m.equipe_a)?.nome || 'Time A';
-    const teamB = state.teams.find(t => t.id === m.equipe_b)?.nome || 'Time B';
+    const teamAObj = state.teams.find(t => t.id === m.equipe_a);
+    const teamBObj = state.teams.find(t => t.id === m.equipe_b);
+    const teamA = teamAObj?.nome || 'Time A';
+    const teamB = teamBObj?.nome || 'Time B';
     const scoreA = m.placar_a !== null ? m.placar_a : '-';
     const scoreB = m.placar_b !== null ? m.placar_b : '-';
     const extras = m.teve_prorrogacao ? ' <span style="color:var(--gold);">(PRO)</span>' : '';
@@ -371,9 +373,9 @@ function renderRodadas() {
           <span>📍 ${m.local || 'Campo Principal'}</span>
         </div>
         <div class="match-teams">
-          <div class="team-box">${teamA}</div>
+          <div class="team-box" style="cursor:pointer;" onclick="openTeamProfile('${teamAObj?.id}')">${teamA}</div>
           <div class="score">${scoreA} × ${scoreB}${extras}${penaltis}</div>
-          <div class="team-box away">${teamB}</div>
+          <div class="team-box away" style="cursor:pointer;" onclick="openTeamProfile('${teamBObj?.id}')">${teamB}</div>
         </div>
         <div id="match-extras-${m.id}" style="margin-top:8px; font-size:0.75rem; color:var(--text-muted);"></div>
         <div style="display:flex; justify-content:space-between; margin-top:8px;">
@@ -418,6 +420,8 @@ function renderTabela() {
   const standings = calculateStandings();
   const tbody = document.getElementById('table-standings');
   if (!tbody) return;
+  renderArtilheiros();
+  renderAssistencias();
 
   tbody.innerHTML = standings.map((t, index) => {
     const pos = index + 1;
@@ -436,6 +440,48 @@ function renderTabela() {
       </tr>
     `;
   }).join('');
+}
+
+async function renderArtilheiros() {
+  const el = document.getElementById('lista-artilheiros');
+  if (!el) return;
+  el.innerHTML = '<p style="color:var(--text-muted); font-size:0.85rem;">Carregando...</p>';
+  try {
+    const artilheiros = await fetchArtilheiros(state.categoria);
+    el.innerHTML = artilheiros.length
+      ? `<div class="standings-wrap">${artilheiros.map((a, i) => `
+          <div style="display:flex; align-items:center; gap:10px; padding:8px 12px; border-top:${i === 0 ? 'none' : '1px solid var(--border-soft)'}; cursor:pointer;" onclick="openJogadorPerfil('${a.jogador_id}')">
+            <b style="width:18px; color:var(--text-muted);">${i + 1}º</b>
+            <div class="roster-avatar" style="width:32px; height:32px;">${a.foto_url ? `<img src="${a.foto_url}">` : '⚽'}</div>
+            <div style="flex:1;"><b>${a.nome}</b> <span style="color:var(--text-muted); font-size:0.78rem;">${a.equipe || ''}</span></div>
+            <b style="color:var(--gold-bright);">${a.gols}</b>
+          </div>
+        `).join('')}</div>`
+      : '<p style="color:var(--text-muted); font-size:0.85rem;">Nenhum gol registrado ainda.</p>';
+  } catch (e) {
+    el.innerHTML = `<p style="color:var(--danger-strong); font-size:0.85rem;">Erro: ${e.message}</p>`;
+  }
+}
+
+async function renderAssistencias() {
+  const el = document.getElementById('lista-assistencias');
+  if (!el) return;
+  el.innerHTML = '<p style="color:var(--text-muted); font-size:0.85rem;">Carregando...</p>';
+  try {
+    const assistencias = await fetchAssistencias(state.categoria);
+    el.innerHTML = assistencias.length
+      ? `<div class="standings-wrap">${assistencias.map((a, i) => `
+          <div style="display:flex; align-items:center; gap:10px; padding:8px 12px; border-top:${i === 0 ? 'none' : '1px solid var(--border-soft)'}; cursor:pointer;" onclick="openJogadorPerfil('${a.jogador_id}')">
+            <b style="width:18px; color:var(--text-muted);">${i + 1}º</b>
+            <div class="roster-avatar" style="width:32px; height:32px;">${a.foto_url ? `<img src="${a.foto_url}">` : '🅰️'}</div>
+            <div style="flex:1;"><b>${a.nome}</b> <span style="color:var(--text-muted); font-size:0.78rem;">${a.equipe || ''}</span></div>
+            <b style="color:var(--gold-bright);">${a.assistencias}</b>
+          </div>
+        `).join('')}</div>`
+      : '<p style="color:var(--text-muted); font-size:0.85rem;">Nenhuma assistência registrada ainda.</p>';
+  } catch (e) {
+    el.innerHTML = `<p style="color:var(--danger-strong); font-size:0.85rem;">Erro: ${e.message}</p>`;
+  }
 }
 
 // ---------------------------------------------------------------------
@@ -572,10 +618,10 @@ async function openTeamProfile(teamId) {
     <div class="card">
       <div class="card-title">Elenco <span style="color:var(--text-muted); font-weight:400;">${(t.jogadores || []).length} Jogadores</span></div>
       ${(t.jogadores || []).length ? t.jogadores.map(j => `
-        <div class="roster-item ${j.nome === t.capitao ? 'captain' : ''}">
+        <div class="roster-item ${j.nome === t.capitao ? 'captain' : ''}" style="cursor:pointer;" onclick="openJogadorPerfil('${j.id}')">
           <div class="roster-avatar">${j.foto_url ? `<img src="${j.foto_url}">` : (j.posicao === 'Goleiro' || j.posicao === 'G' ? 'G' : '')}</div>
           <div>
-            <div class="roster-name">${j.nome} ${j.nome === t.capitao ? '⭐' : ''}</div>
+            <div class="roster-name">${j.nome} ${j.nome === t.capitao ? '⭐' : ''}${j.convidado ? ' 🌟' : ''}</div>
             <div class="roster-role">${j.posicao || 'Posição não informada'}${j.numero ? ' • #' + j.numero : ''}</div>
           </div>
         </div>
@@ -722,9 +768,45 @@ async function togglePip() {
 }
 
 // ---------------------------------------------------------------------
-// SELEÇÃO DA RODADA (automático pela nota) + ACUMULADO DO CAMPEONATO
+// SELEÇÃO DA RODADA (automático pela nota, com desempate) + ACUMULADO
 // ---------------------------------------------------------------------
-function agruparMelhorPorRodada(escalacoes) {
+function statsDoJogadorNaPartida(jogadorId, partidaId, gols, eventos) {
+  const golsFeitos = gols.filter(g => g.partida_id === partidaId && g.jogador_id === jogadorId).length;
+  const assistencias = gols.filter(g => g.partida_id === partidaId && g.assistencia_jogador_id === jogadorId).length;
+  const amarelos = eventos.filter(e => e.partida_id === partidaId && e.jogador_id === jogadorId && e.tipo === 'cartao_amarelo').length;
+  const vermelhos = eventos.filter(e => e.partida_id === partidaId && e.jogador_id === jogadorId && e.tipo === 'cartao_vermelho').length;
+  return { golsFeitos, assistencias, disciplina: amarelos + vermelhos * 3 }; // disciplina: menor é melhor
+}
+
+function golsSofridosNaPartida(e) {
+  const p = e.partidas;
+  if (!p) return 0;
+  const souEquipeA = p.equipe_a === e.equipe_id;
+  return souEquipeA ? (p.placar_b ?? 0) : (p.placar_a ?? 0);
+}
+
+// Critérios de desempate quando duas ou mais notas empatam na mesma posição:
+// linha/ataque → 1) gols feitos 2) assistências 3) disciplina (menos cartão)
+// goleiro (GOL) → 1) gols sofridos (menos é melhor) 2) disciplina
+function melhorEntreEmpatados(candidatos, gols, eventos) {
+  return [...candidatos].sort((a, b) => {
+    const ehGoleiro = a.jogadores?.posicao === 'GOL';
+    if (ehGoleiro) {
+      const diffSofridos = golsSofridosNaPartida(a) - golsSofridosNaPartida(b);
+      if (diffSofridos !== 0) return diffSofridos;
+      const dA = statsDoJogadorNaPartida(a.jogador_id, a.partida_id, gols, eventos).disciplina;
+      const dB = statsDoJogadorNaPartida(b.jogador_id, b.partida_id, gols, eventos).disciplina;
+      return dA - dB;
+    }
+    const sA = statsDoJogadorNaPartida(a.jogador_id, a.partida_id, gols, eventos);
+    const sB = statsDoJogadorNaPartida(b.jogador_id, b.partida_id, gols, eventos);
+    if (sB.golsFeitos !== sA.golsFeitos) return sB.golsFeitos - sA.golsFeitos;
+    if (sB.assistencias !== sA.assistencias) return sB.assistencias - sA.assistencias;
+    return sA.disciplina - sB.disciplina;
+  })[0];
+}
+
+function agruparMelhorPorRodada(escalacoes, gols, eventos) {
   const porRodada = {};
   escalacoes.forEach(e => {
     const rodada = e.partidas?.rodada;
@@ -735,50 +817,103 @@ function agruparMelhorPorRodada(escalacoes) {
 
   const resultado = {};
   Object.entries(porRodada).forEach(([rodada, entries]) => {
-    const melhorPorPosicao = {};
+    const porPosicao = {};
     entries.forEach(e => {
       const pos = e.jogadores?.posicao || '—';
-      if (!melhorPorPosicao[pos] || Number(e.nota) > Number(melhorPorPosicao[pos].nota)) melhorPorPosicao[pos] = e;
+      (porPosicao[pos] = porPosicao[pos] || []).push(e);
+    });
+
+    const melhorPorPosicao = {};
+    Object.entries(porPosicao).forEach(([pos, candidatos]) => {
+      const maiorNota = Math.max(...candidatos.map(c => Number(c.nota)));
+      const empatados = candidatos.filter(c => Number(c.nota) === maiorNota);
+      melhorPorPosicao[pos] = empatados.length === 1 ? empatados[0] : melhorEntreEmpatados(empatados, gols, eventos);
     });
     resultado[rodada] = melhorPorPosicao;
   });
   return resultado;
 }
 
-async function getEscalacoesCategoria() {
-  if (!state._escalacoesCache) {
-    state._escalacoesCache = await fetchEscalacoesDaCategoria(state.categoria);
+async function getDadosSelecaoCategoria() {
+  if (!state._selecaoCache) {
+    const [escalacoes, gols, eventos] = await Promise.all([
+      fetchEscalacoesDaCategoria(state.categoria),
+      fetchGolsDaCategoria(state.categoria),
+      fetchEventosDaCategoria(state.categoria),
+    ]);
+    state._selecaoCache = { escalacoes, gols, eventos };
   }
-  return state._escalacoesCache;
+  return state._selecaoCache;
+}
+
+function iconesSelecao(jid, pid, gols, eventos) {
+  const golsMarcados = gols.filter(g => g.partida_id === pid && g.jogador_id === jid).length;
+  const assistencias = gols.filter(g => g.partida_id === pid && g.assistencia_jogador_id === jid).length;
+  const cartoes = eventos.filter(e => e.partida_id === pid && e.jogador_id === jid);
+  let out = '';
+  cartoes.forEach(c => { if (TIPO_EVENTO_LABEL_PUBLICO[c.tipo]) out += `<span>${TIPO_EVENTO_LABEL_PUBLICO[c.tipo]}</span>`; });
+  if (golsMarcados) out += `<span>⚽${golsMarcados > 1 ? 'x' + golsMarcados : ''}</span>`;
+  if (assistencias) out += `<span>🅰️${assistencias > 1 ? 'x' + assistencias : ''}</span>`;
+  return out;
+}
+
+function renderPitchSelecao(entradas, gols, eventos) {
+  const linhas = agruparEscalacaoPorLinha(entradas);
+  const iconesFn = (jid, pid) => iconesSelecao(jid, pid, gols, eventos);
+  return `
+    <div class="pitch">
+      <div class="pitch-goal-box top"></div>
+      ${[4, 3, 2, 1, 0].filter(n => linhas[n].length).map(n => `<div class="pitch-line">${linhas[n].map(e => renderPitchPlayer(e, iconesFn, true)).join('')}</div>`).join('')}
+      <div class="pitch-goal-box bottom"></div>
+    </div>
+  `;
 }
 
 async function renderSelecaoRodada() {
   const elSelecao = document.getElementById('selecao-rodada');
   if (!elSelecao) return;
-  elSelecao.innerHTML = '<p style="color:var(--text-muted); grid-column:1/-1; font-size:0.85rem;">Carregando...</p>';
+  elSelecao.innerHTML = '<p style="color:var(--text-muted); font-size:0.85rem;">Carregando...</p>';
 
   try {
-    const escalacoes = await getEscalacoesCategoria();
-    const agrupado = agruparMelhorPorRodada(escalacoes);
+    const { escalacoes, gols, eventos } = await getDadosSelecaoCategoria();
+    const agrupado = agruparMelhorPorRodada(escalacoes, gols, eventos);
     const melhorPorPosicao = agrupado[state.selectedRound];
 
     if (!melhorPorPosicao || !Object.keys(melhorPorPosicao).length) {
-      elSelecao.innerHTML = '<p style="color:var(--text-muted); grid-column:1/-1; font-size:0.85rem;">Sem notas lançadas nesta rodada ainda.</p>';
+      elSelecao.innerHTML = '<p style="color:var(--text-muted); font-size:0.85rem;">Sem notas lançadas nesta rodada ainda.</p>';
       return;
     }
 
-    elSelecao.innerHTML = Object.entries(melhorPorPosicao).map(([pos, e]) => `
-      <div class="team-tile" style="cursor:default;">
-        <div class="team-tile-shield" style="border-radius:50%;">${e.jogadores?.foto_url ? `<img src="${e.jogadores.foto_url}">` : '👤'}</div>
-        <div class="team-tile-name">${e.jogadores?.nome}</div>
-        <div style="font-size:0.72rem; color:var(--text-muted);">${pos}</div>
-        <div style="color:var(--gold-bright); font-weight:800;">${Number(e.nota).toFixed(1)}</div>
-      </div>
-    `).join('');
+    elSelecao.innerHTML = renderPitchSelecao(Object.values(melhorPorPosicao), gols, eventos);
   } catch (e) {
     console.error(e);
     elSelecao.innerHTML = '';
   }
+}
+
+function calcularMelhorDoCampeonatoPorPosicao(agrupadoPorRodada) {
+  const acumulado = {}; // posicao -> jogadorId -> { entry, pontos, somaNotas, qtdNotas }
+  Object.values(agrupadoPorRodada).forEach(melhorPorPosicao => {
+    Object.entries(melhorPorPosicao).forEach(([pos, e]) => {
+      acumulado[pos] = acumulado[pos] || {};
+      const id = e.jogador_id;
+      if (!acumulado[pos][id]) acumulado[pos][id] = { entry: e, pontos: 0, somaNotas: 0, qtdNotas: 0 };
+      acumulado[pos][id].pontos++;
+      acumulado[pos][id].somaNotas += Number(e.nota);
+      acumulado[pos][id].qtdNotas++;
+    });
+  });
+
+  const melhorPorPosicao = {};
+  Object.entries(acumulado).forEach(([pos, candidatosObj]) => {
+    const candidatos = Object.values(candidatosObj).sort((a, b) => {
+      if (b.pontos !== a.pontos) return b.pontos - a.pontos;
+      return (b.somaNotas / b.qtdNotas) - (a.somaNotas / a.qtdNotas);
+    });
+    const melhor = candidatos[0];
+    melhorPorPosicao[pos] = { ...melhor.entry, nota: (melhor.somaNotas / melhor.qtdNotas).toFixed(1), _pontos: melhor.pontos };
+  });
+  return melhorPorPosicao;
 }
 
 async function openSelecaoCampeonato() {
@@ -787,32 +922,27 @@ async function openSelecaoCampeonato() {
   document.getElementById('app-modal').classList.add('active');
 
   try {
-    const escalacoes = await getEscalacoesCategoria();
-    const agrupado = agruparMelhorPorRodada(escalacoes);
+    const { escalacoes, gols, eventos } = await getDadosSelecaoCategoria();
+    const agrupado = agruparMelhorPorRodada(escalacoes, gols, eventos);
+    const melhorPorPosicao = calcularMelhorDoCampeonatoPorPosicao(agrupado);
 
-    const pontosMelhor = {}; // jogadorId -> { jogador, pontos }
+    if (!Object.keys(melhorPorPosicao).length) {
+      document.getElementById('modal-body').innerHTML = '<p style="color:var(--text-muted); text-align:center; padding:20px 0;">Sem dados suficientes ainda.</p>';
+      return;
+    }
 
-    Object.values(agrupado).forEach(melhorPorPosicao => {
-      Object.values(melhorPorPosicao).forEach(e => {
-        const id = e.jogador_id;
-        if (!pontosMelhor[id]) pontosMelhor[id] = { nome: e.jogadores?.nome, posicao: e.jogadores?.posicao, equipe: e.equipes?.nome, pontos: 0 };
-        pontosMelhor[id].pontos++;
-      });
-    });
-
-    const rankMelhor = Object.values(pontosMelhor).sort((a, b) => b.pontos - a.pontos).slice(0, 12);
-
-    const linha = (r) => `
-      <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-top:1px solid var(--border-soft); font-size:0.85rem;">
-        <span><b>${r.nome}</b> <span style="color:var(--text-muted); font-size:0.75rem;">${r.posicao || ''} · ${r.equipe || ''}</span></span>
-        <b style="color:var(--gold-bright);">${r.pontos}×</b>
+    const legendaHtml = Object.entries(melhorPorPosicao).map(([pos, e]) => `
+      <div style="display:flex; justify-content:space-between; padding:5px 0; border-top:1px solid var(--border-soft); font-size:0.82rem;">
+        <span><b>${e.jogadores?.nome}</b> <span style="color:var(--text-muted);">${pos} · ${e.equipes?.nome || ''}</span></span>
+        <b style="color:var(--gold-bright);">${e._pontos}× seleção</b>
       </div>
-    `;
+    `).join('');
 
     document.getElementById('modal-body').innerHTML = `
-      <div class="card">
-        <div class="card-title">⭐ Mais vezes na Seleção da Rodada</div>
-        ${rankMelhor.map(linha).join('') || '<p style="color:var(--text-muted); font-size:0.85rem;">Sem dados ainda.</p>'}
+      ${renderPitchSelecao(Object.values(melhorPorPosicao), gols, eventos)}
+      <div class="card" style="margin-top:12px;">
+        <div class="card-title">Quantas vezes cada um foi convocado</div>
+        ${legendaHtml}
       </div>
     `;
   } catch (e) {
@@ -885,8 +1015,14 @@ async function openSumula(matchId) {
   } catch (e) { console.error(e); }
 }
 
-const LINHA_POSICAO = { GOL: 0, LE: 1, ZAG: 1, LD: 1, ME: 2, MC: 2, MD: 2, PE: 3, PD: 3, CA: 4 };
-const ORDEM_NA_LINHA = { LE: 0, ZAG: 1, LD: 2, ME: 0, MC: 1, MD: 2, PE: 0, PD: 1, CA: 0 };
+const LINHA_POSICAO = {
+  GOL: 0,
+  LE: 1, ZAG: 1, LD: 1, FIXO: 1,
+  ME: 2, MC: 2, MD: 2, ALA: 2,
+  PE: 3, PD: 3,
+  CA: 4, PIVO: 4,
+};
+const ORDEM_NA_LINHA = { LE: 0, ZAG: 1, LD: 2, FIXO: 0, ME: 0, MC: 1, MD: 2, ALA: 0, PE: 0, PD: 1, CA: 0, PIVO: 0 };
 
 function agruparEscalacaoPorLinha(titulares) {
   const linhas = { 0: [], 1: [], 2: [], 3: [], 4: [] };
@@ -906,51 +1042,77 @@ function formacaoLabel(linhas) {
   return [defesa, meio, ataque].filter(n => n > 0).join('-') || '—';
 }
 
-function renderPitchPlayer(e, icones) {
+function renderPitchPlayer(e, icones, mostrarEquipe) {
   const j = e.jogadores || {};
   return `
-    <div class="pitch-player">
-      <div class="pitch-player-badges">${icones(e.jogador_id)}</div>
+    <div class="pitch-player" onclick="openJogadorPerfil('${e.jogador_id}')">
+      <div class="pitch-player-badges">${icones(e.jogador_id, e.partida_id)}</div>
       <div class="pitch-player-avatar">${j.foto_url ? `<img src="${j.foto_url}">` : (j.numero || '')}</div>
       ${e.nota !== null ? `<div class="pitch-player-nota">${Number(e.nota).toFixed(1)}</div>` : ''}
-      <div class="pitch-player-name">${j.nome ? j.nome.split(' ')[0] : ''}</div>
+      <div class="pitch-player-name">${j.nome ? j.nome.split(' ')[0] : ''}${j.convidado ? ' 🌟' : ''}</div>
+      ${mostrarEquipe ? `<div class="pitch-player-team">${e.equipes?.nome || ''}</div>` : ''}
     </div>
   `;
 }
 
-function renderPitchTeam(t, escalacaoDoTime, icones) {
-  const titulares = escalacaoDoTime.filter(e => e.titular);
+function renderReservasBloco(t, escalacaoDoTime, icones) {
   const reservas = escalacaoDoTime.filter(e => !e.titular);
-
-  if (!titulares.length) {
-    return `<div class="card"><div class="card-title">${t?.nome || ''}</div><p style="color:var(--text-muted); font-size:0.85rem;">Escalação ainda não informada.</p></div>`;
-  }
-
-  const linhas = agruparEscalacaoPorLinha(titulares);
-
+  if (!reservas.length) return '';
   return `
-    <div style="margin-bottom:18px;">
-      <div class="pitch-formation-label">${t?.nome || ''} · ${formacaoLabel(linhas)}</div>
-      <div class="pitch">
-        <div class="pitch-goal-box top"></div>
-        ${[4, 3, 2, 1, 0].filter(n => linhas[n].length).map(n => `
-          <div class="pitch-line">${linhas[n].map(e => renderPitchPlayer(e, icones)).join('')}</div>
-        `).join('')}
-        <div class="pitch-goal-box bottom"></div>
-      </div>
-      ${reservas.length ? `
-        <div class="pitch-reserves">
-          <div class="pitch-reserves-label">Reservas</div>
-          ${reservas.map(e => `
-            <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-top:1px solid var(--border-soft); font-size:0.82rem;">
-              <span>${e.jogadores?.numero ? '#' + e.jogadores.numero + ' ' : ''}${e.jogadores?.nome || ''} <span style="color:var(--text-muted); font-size:0.72rem;">${e.jogadores?.posicao || ''}</span> ${icones(e.jogador_id)}</span>
-              ${e.nota !== null ? `<b style="color:var(--gold-bright);">${Number(e.nota).toFixed(1)}</b>` : ''}
-            </div>
-          `).join('')}
+    <div class="pitch-reserves">
+      <div class="pitch-reserves-label">Reservas — ${t?.nome || ''}</div>
+      ${reservas.map(e => `
+        <div class="roster-item" style="cursor:pointer; margin-bottom:6px;" onclick="openJogadorPerfil('${e.jogador_id}')">
+          <div class="roster-avatar">${e.jogadores?.foto_url ? `<img src="${e.jogadores.foto_url}">` : (e.jogadores?.numero || '')}</div>
+          <div style="flex:1;">
+            <div class="roster-name">${e.jogadores?.nome || ''}${e.jogadores?.convidado ? ' 🌟' : ''}</div>
+            <div class="roster-role">${e.jogadores?.posicao || ''} ${icones(e.jogador_id)}</div>
+          </div>
+          ${e.nota !== null ? `<b style="color:var(--gold-bright);">${Number(e.nota).toFixed(1)}</b>` : ''}
         </div>
-      ` : ''}
+      `).join('')}
     </div>
   `;
+}
+
+// Campo único com as duas equipes — time A de cima (goleiro no topo, ataque
+// perto do centro), time B espelhado embaixo (ataque perto do centro,
+// goleiro na base). É como jogos de futebol mostram escalação de confronto.
+function renderEscalacaoMesclada(tA, tB, escalacaoA, escalacaoB, icones) {
+  const titularesA = escalacaoA.filter(e => e.titular);
+  const titularesB = escalacaoB.filter(e => e.titular);
+  const linhasA = agruparEscalacaoPorLinha(titularesA);
+  const linhasB = agruparEscalacaoPorLinha(titularesB);
+
+  const metadeA = titularesA.length
+    ? [0, 1, 2, 3, 4].filter(n => linhasA[n].length).map(n => `<div class="pitch-line">${linhasA[n].map(e => renderPitchPlayer(e, icones)).join('')}</div>`).join('')
+    : `<p class="pitch-empty-msg">Escalação de ${tA?.nome || 'equipe A'} pendente</p>`;
+
+  const metadeB = titularesB.length
+    ? [4, 3, 2, 1, 0].filter(n => linhasB[n].length).map(n => `<div class="pitch-line">${linhasB[n].map(e => renderPitchPlayer(e, icones)).join('')}</div>`).join('')
+    : `<p class="pitch-empty-msg">Escalação de ${tB?.nome || 'equipe B'} pendente</p>`;
+
+  return `
+    <div class="pitch-formation-label">
+      <span onclick="irParaEquipe('${tA?.id}')" style="cursor:pointer; text-decoration:underline dotted;">${tA?.nome || ''} · ${formacaoLabel(linhasA)}</span>
+      &nbsp;×&nbsp;
+      <span onclick="irParaEquipe('${tB?.id}')" style="cursor:pointer; text-decoration:underline dotted;">${tB?.nome || ''} · ${formacaoLabel(linhasB)}</span>
+    </div>
+    <div class="pitch pitch-dual">
+      <div class="pitch-goal-box top"></div>
+      ${metadeA}
+      <div class="pitch-center-line"></div>
+      ${metadeB}
+      <div class="pitch-goal-box bottom"></div>
+    </div>
+    ${renderReservasBloco(tA, escalacaoA, icones)}
+    ${renderReservasBloco(tB, escalacaoB, icones)}
+  `;
+}
+
+function irParaEquipe(teamId) {
+  closeModal();
+  openTeamProfile(teamId);
 }
 
 async function openEscalacoes(matchId) {
@@ -984,10 +1146,58 @@ async function openEscalacoes(matchId) {
     const escalacaoA = escalacao.filter(e => e.equipe_id === tA?.id);
     const escalacaoB = escalacao.filter(e => e.equipe_id === tB?.id);
 
-    document.getElementById('modal-body').innerHTML =
-      renderPitchTeam(tA, escalacaoA, icones) + renderPitchTeam(tB, escalacaoB, icones);
+    document.getElementById('modal-body').innerHTML = renderEscalacaoMesclada(tA, tB, escalacaoA, escalacaoB, icones);
   } catch (e) {
     document.getElementById('modal-body').innerHTML = `<p style="color:var(--danger-strong);">Erro ao carregar: ${e.message}</p>`;
+  }
+}
+
+// ---------------------------------------------------------------------
+// PERFIL DO JOGADOR (modal com estatísticas)
+// ---------------------------------------------------------------------
+async function openJogadorPerfil(jogadorId) {
+  let jogador = null;
+  let equipe = null;
+  state.teams.forEach(t => {
+    const encontrado = (t.jogadores || []).find(j => j.id === jogadorId);
+    if (encontrado) { jogador = encontrado; equipe = t; }
+  });
+  if (!jogador) return;
+
+  document.getElementById('modal-title').innerText = jogador.nome;
+  document.getElementById('modal-body').innerHTML = `
+    <div style="text-align:center; margin-bottom:16px;">
+      <div class="team-header-shield" style="border-radius:50%; margin:0 auto 10px;">${jogador.foto_url ? `<img src="${jogador.foto_url}">` : '<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:1.8rem;background:var(--surface-high);">👤</div>'}</div>
+      <h4>${jogador.nome} ${jogador.convidado ? '🌟' : ''}</h4>
+      <p style="color:var(--text-muted); font-size:0.85rem; margin-top:4px; cursor:pointer;" onclick="irParaEquipe('${equipe?.id}')">${equipe?.nome || ''} <span style="text-decoration:underline;">→</span></p>
+      <p style="color:var(--gold); font-size:0.8rem; margin-top:2px;">${jogador.posicao || 'Posição não informada'}${jogador.numero ? ' · #' + jogador.numero : ''}</p>
+    </div>
+    <div id="jogador-perfil-stats"><p style="text-align:center; color:var(--text-muted); font-size:0.85rem;">Carregando estatísticas...</p></div>
+  `;
+  document.getElementById('app-modal').classList.add('active');
+
+  try {
+    const stats = await fetchJogadorStats(jogadorId);
+    document.getElementById('jogador-perfil-stats').innerHTML = `
+      <div class="stats-grid">
+        <div class="stat-card"><div class="stat-label">Gols</div><div class="stat-value">${stats.gols}</div></div>
+        <div class="stat-card"><div class="stat-label">Assistências</div><div class="stat-value">${stats.assistencias}</div></div>
+      </div>
+      <div class="card" style="margin-top:12px;">
+        <div class="stat-label">Disciplina</div>
+        <div class="discipline-card">
+          <div class="discipline-item"><span class="chip chip-yellow"></span> ${stats.cartaoAmarelo}</div>
+          <div class="discipline-item"><span class="chip chip-red"></span> ${stats.cartaoVermelho}</div>
+          <div class="discipline-item">🩹 ${stats.lesoes}</div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="stat-label">Média de Nota Acumulada</div>
+        <div class="stat-value" style="margin-top:6px;">${stats.mediaNota !== null ? stats.mediaNota.toFixed(1) : '—'} ${stats.jogosAvaliados ? `<small>(${stats.jogosAvaliados} jogo${stats.jogosAvaliados > 1 ? 's' : ''} avaliado${stats.jogosAvaliados > 1 ? 's' : ''})</small>` : ''}</div>
+      </div>
+    `;
+  } catch (e) {
+    document.getElementById('jogador-perfil-stats').innerHTML = `<p style="color:var(--danger-strong); font-size:0.85rem;">Erro ao carregar estatísticas: ${e.message}</p>`;
   }
 }
 

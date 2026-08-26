@@ -11,6 +11,26 @@ let matches = [];
 let jogadoresPendentes = []; // linhas do formulário "Nova Equipe" ainda não salvas
 let minJogadoresExigidos = 11; // atualizado a partir do "Formato do Campeonato" da categoria
 
+function refreshCapitaoOptions() {
+  const select = document.getElementById('team-captain');
+  if (!select || editingTeamId) return; // no modo edição quem popula é atualizarSelectCapitao(t)
+  const atual = select.value;
+  const nomesValidos = jogadoresPendentes.map(j => j.nome).filter(n => n && n.trim());
+
+  select.innerHTML = '<option value="">— Nenhum —</option>' + nomesValidos.map(n => `<option value="${n}">${n}</option>`).join('');
+  if (nomesValidos.includes(atual)) select.value = atual;
+}
+
+function atualizarSelectCapitao(t) {
+  const select = document.getElementById('team-captain');
+  if (!select) return;
+  const jogadores = t.jogadores || [];
+  const atual = t.capitao && t.capitao !== 'A definir' ? t.capitao : '';
+
+  select.innerHTML = '<option value="">— Nenhum —</option>' + jogadores.map(j => `<option value="${j.nome}">${j.nome}</option>`).join('');
+  select.value = jogadores.some(j => j.nome === atual) ? atual : '';
+}
+
 function updateMinJogadoresNote() {
   const el = document.getElementById('min-jogadores-note');
   if (!el) return;
@@ -84,12 +104,21 @@ async function setAdminCategoria(categoria) {
   if (activeScreen === 'disciplina') initDisciplinaTab();
 }
 
+const POSICOES_POR_MODALIDADE = {
+  campo: ['GOL', 'ZAG', 'LD', 'LE', 'MC', 'MD', 'ME', 'PE', 'PD', 'CA'],
+  quadra: ['GOL', 'FIXO', 'ALA', 'PIVO'],
+  society: ['GOL', 'FIXO', 'ALA', 'PIVO'],
+};
+let posicoesAtuais = POSICOES_POR_MODALIDADE.campo;
+
 async function loadMinJogadoresExigidos() {
   try {
     const cfg = await fetchModalidade(adminCategoria);
     minJogadoresExigidos = cfg.titulares || 11;
+    posicoesAtuais = POSICOES_POR_MODALIDADE[cfg.modalidade] || POSICOES_POR_MODALIDADE.campo;
   } catch (e) {
     minJogadoresExigidos = 11;
+    posicoesAtuais = POSICOES_POR_MODALIDADE.campo;
   }
   updateMinJogadoresNote();
 }
@@ -127,9 +156,9 @@ async function initAdmin() {
   }
 
   renderAdminTeamsSummary();
-  addJogadorRow(); // primeira linha do formulário já vem pronta
-  renderAdminTeamsList();
   await loadMinJogadoresExigidos();
+  addJogadorRow(); // primeira linha do formulário já vem pronta, com as posições certas
+  renderAdminTeamsList();
   await loadAdminRound(); // tela inicial agora é "Placar"
 }
 
@@ -241,14 +270,16 @@ function renderAdminRound() {
     }
     const tA = teams.find(x => x.id === m.equipe_a)?.nome || '?';
     const tB = teams.find(x => x.id === m.equipe_b)?.nome || '?';
+    const travado = !!m.placar_travado;
 
     return `
-      <div class="card">
+      <div class="card" style="${travado ? 'border-color: var(--gold);' : ''}">
+        ${travado ? `<p style="color:var(--gold); font-size:0.72rem; font-weight:700; margin-bottom:8px;">🔒 PARTIDA ENCERRADA — placar travado</p>` : ''}
         <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:12px;">
           <span style="font-weight:700; font-size:0.9rem;">${tA}</span>
-          <input type="number" id="scA_${m.id}" value="${m.placar_a ?? ''}" class="form-control" style="width:54px; text-align:center; flex-shrink:0;">
+          <input type="number" id="scA_${m.id}" value="${m.placar_a ?? ''}" class="form-control" style="width:54px; text-align:center; flex-shrink:0;" ${travado ? 'disabled' : ''}>
           <span style="color:var(--text-muted);">×</span>
-          <input type="number" id="scB_${m.id}" value="${m.placar_b ?? ''}" class="form-control" style="width:54px; text-align:center; flex-shrink:0;">
+          <input type="number" id="scB_${m.id}" value="${m.placar_b ?? ''}" class="form-control" style="width:54px; text-align:center; flex-shrink:0;" ${travado ? 'disabled' : ''}>
           <span style="font-weight:700; font-size:0.9rem; text-align:right;">${tB}</span>
         </div>
         <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
@@ -260,9 +291,32 @@ function renderAdminRound() {
           <button class="btn-action" style="flex:1;" onclick="saveMatchUI('${m.id}')">Salvar</button>
           <button class="btn-secondary" onclick="openSumulaAdmin('${m.id}')">📋 Súmula</button>
         </div>
+        ${!travado ? `<button class="btn-secondary" style="width:100%; margin-top:8px; border-color:var(--danger-strong); color:var(--danger-strong);" onclick="encerrarPartidaUI('${m.id}')">🔒 Encerrar Partida (trava o placar)</button>` : ''}
       </div>
     `;
   }).join('');
+}
+
+async function encerrarPartidaUI(matchId) {
+  if (!confirm('Encerrar esta partida? O placar não poderá mais ser alterado depois disso. Cartões, gols e assistências continuam editáveis.')) return;
+  try {
+    await encerrarPartida(matchId);
+    await loadAdminRound();
+  } catch (e) {
+    alert('Erro ao encerrar: ' + e.message);
+  }
+}
+
+async function aplicarDataRodadaUI() {
+  const data = document.getElementById('bulk-round-date').value;
+  if (!data) { alert('Escolha uma data.'); return; }
+  try {
+    await bulkSetRoundDate(adminCategoria, adminRound, data);
+    alert(`Data aplicada a todos os jogos da Rodada ${adminRound}!`);
+    await loadAdminRound();
+  } catch (e) {
+    alert('Erro: ' + e.message);
+  }
 }
 
 async function saveMatchUI(matchId) {
@@ -318,7 +372,7 @@ async function saveFormato(e) {
 // ---------------------------------------------------------------------
 function addJogadorRow() {
   const id = 'jr_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
-  jogadoresPendentes.push({ rowId: id, nome: '', numero: '', posicao: '', fotoFile: null });
+  jogadoresPendentes.push({ rowId: id, nome: '', numero: '', posicao: '', fotoFile: null, convidado: false });
 
   const list = document.getElementById('jogadores-list');
   const card = document.createElement('div');
@@ -327,7 +381,7 @@ function addJogadorRow() {
   card.innerHTML = `
     <div class="jogador-card-header">
       <img class="jogador-card-avatar" id="prev_${id}" style="display:none;">
-      <input type="text" class="form-control" style="flex:1;" placeholder="Nome do jogador" oninput="updateJogadorField('${id}','nome',this.value)">
+      <input type="text" class="form-control" style="flex:1;" placeholder="Nome do jogador" oninput="updateJogadorField('${id}','nome',this.value); refreshCapitaoOptions();">
     </div>
     <div class="jogador-card-row">
       <input type="number" class="form-control" placeholder="Número da camisa" oninput="updateJogadorField('${id}','numero',this.value)">
@@ -337,6 +391,9 @@ function addJogadorRow() {
       <label>Foto do jogador (opcional)</label>
       <input type="file" accept="image/*" class="form-control" onchange="handleJogadorFoto('${id}', this)">
     </div>
+    <label style="display:flex; align-items:center; gap:6px; font-size:0.78rem; color:var(--text-muted); margin-bottom:10px;">
+      <input type="checkbox" onchange="updateJogadorField('${id}','convidado',this.checked)"> 🌟 Atleta convidado (máx. 1 por equipe, conforme regulamento)
+    </label>
     <div class="jogador-card-actions">
       <button type="button" class="btn-remove" onclick="removeJogadorRow('${id}')">✕ Remover esta linha</button>
     </div>
@@ -365,6 +422,7 @@ function removeJogadorRow(rowId) {
   jogadoresPendentes = jogadoresPendentes.filter(j => j.rowId !== rowId);
   document.getElementById(rowId)?.remove();
   updateMinJogadoresNote();
+  refreshCapitaoOptions();
 }
 
 async function saveTeam(e) {
@@ -375,6 +433,10 @@ async function saveTeam(e) {
     if (jogadoresValidosCheck.length < minJogadoresExigidos) {
       alert(`Faltam jogadores: cadastre pelo menos ${minJogadoresExigidos} (formato configurado em "Formato do Campeonato") antes de salvar a equipe. Você preencheu ${jogadoresValidosCheck.length}.`);
       return;
+    }
+    const convidados = jogadoresValidosCheck.filter(j => j.convidado).length;
+    if (convidados > 1) {
+      if (!confirm(`Você marcou ${convidados} jogadores como convidado, e o regulamento permite só 1 por equipe. Salvar mesmo assim?`)) return;
     }
   }
 
@@ -423,7 +485,6 @@ function editTeam(teamId) {
 
   document.getElementById('team-name').value = t.nome;
   document.getElementById('team-president').value = t.presidente === 'A definir' ? '' : t.presidente;
-  document.getElementById('team-captain').value = t.capitao === 'A definir' ? '' : t.capitao;
   document.getElementById('team-staff').value = t.comissao_tecnica === 'A definir' ? '' : t.comissao_tecnica;
   document.getElementById('team-marketing').value = (t.diretor_marketing && t.diretor_marketing !== 'A definir') ? t.diretor_marketing : '';
   if (t.escudo_url) {
@@ -446,6 +507,7 @@ function cancelEditTeam() {
   document.getElementById('btn-add-jogador-row').style.display = 'inline-block';
   document.getElementById('jogadores-list').innerHTML = '';
   jogadoresPendentes = [];
+  document.getElementById('team-captain').innerHTML = '<option value="">— Adicione jogadores para escolher —</option>';
   addJogadorRow();
   document.getElementById('btn-salvar-equipe').textContent = 'Salvar Equipe';
   document.getElementById('btn-cancelar-edicao').style.display = 'none';
@@ -454,11 +516,12 @@ function cancelEditTeam() {
 // ---------------------------------------------------------------------
 // EDITOR DE ELENCO (dentro do modo de edição de equipe)
 // ---------------------------------------------------------------------
-const POSICOES_JOGADOR = ['GOL', 'ZAG', 'LD', 'LE', 'MC', 'MD', 'ME', 'PE', 'PD', 'CA'];
 let elencoFotoPendente = {};
 
+const LABEL_POSICAO = { PIVO: 'PIVÔ' };
+
 function opcoesPosicao(selecionada) {
-  return '<option value="">Posição</option>' + POSICOES_JOGADOR.map(p => `<option value="${p}" ${p === selecionada ? 'selected' : ''}>${p}</option>`).join('');
+  return '<option value="">Posição</option>' + posicoesAtuais.map(p => `<option value="${p}" ${p === selecionada ? 'selected' : ''}>${LABEL_POSICAO[p] || p}</option>`).join('');
 }
 
 function renderElencoEdicao(t) {
@@ -479,6 +542,9 @@ function renderElencoEdicao(t) {
         <label>Trocar foto</label>
         <input type="file" accept="image/*" class="form-control" onchange="handleElencoFoto('${j.id}', this, 'elprev_${j.id}')">
       </div>
+      <label style="display:flex; align-items:center; gap:6px; font-size:0.78rem; color:var(--text-muted); margin-bottom:10px;">
+        <input type="checkbox" id="el_convidado_${j.id}" ${j.convidado ? 'checked' : ''}> 🌟 Atleta convidado
+      </label>
       <div class="jogador-card-actions">
         <button type="button" class="btn-action" onclick="salvarJogadorExistente('${j.id}')">💾 Salvar Alterações</button>
         <button type="button" class="btn-remove" onclick="removerJogadorExistente('${j.id}')">✕ Remover</button>
@@ -501,11 +567,16 @@ function renderElencoEdicao(t) {
         <label>Foto (opcional)</label>
         <input type="file" accept="image/*" class="form-control" onchange="handleElencoFoto('novo', this, 'elprev_novo')">
       </div>
+      <label style="display:flex; align-items:center; gap:6px; font-size:0.78rem; color:var(--text-muted); margin-bottom:10px;">
+        <input type="checkbox" id="el_novo_convidado"> 🌟 Atleta convidado
+      </label>
       <div class="jogador-card-actions">
         <button type="button" class="btn-action" onclick="adicionarNovoJogadorElenco()">✅ Cadastrar este Jogador no Elenco</button>
       </div>
     </div>
   `;
+
+  atualizarSelectCapitao(t);
 
   list.innerHTML = `<p style="color:var(--text-muted); font-size:0.75rem; margin-bottom:8px;">${jogadores.length} jogador(es) no elenco.</p>` + existentesHtml + novoHtml;
 }
@@ -530,17 +601,26 @@ async function salvarJogadorExistente(jogadorId) {
   const nome = document.getElementById(`el_nome_${jogadorId}`).value;
   const numero = document.getElementById(`el_numero_${jogadorId}`).value;
   const posicao = document.getElementById(`el_posicao_${jogadorId}`).value;
+  const convidado = document.getElementById(`el_convidado_${jogadorId}`).checked;
   const fotoFile = elencoFotoPendente[jogadorId] || null;
 
   if (!nome.trim()) { alert('O nome do jogador não pode ficar em branco.'); return; }
+  if (convidado && jaTemOutroConvidado(editingTeamId, jogadorId)) {
+    if (!confirm('Essa equipe já tem outro atleta marcado como convidado, e o regulamento permite só 1 por equipe. Salvar mesmo assim?')) return;
+  }
 
   try {
-    await updateJogador(jogadorId, { nome, numero, posicao, fotoFile });
+    await updateJogador(jogadorId, { nome, numero, posicao, fotoFile, convidado });
     elencoFotoPendente[jogadorId] = null;
     await refreshElenco();
   } catch (e) {
     alert('Erro ao salvar jogador: ' + e.message);
   }
+}
+
+function jaTemOutroConvidado(equipeId, excetoJogadorId) {
+  const t = teams.find(x => x.id === equipeId);
+  return (t?.jogadores || []).some(j => j.convidado && j.id !== excetoJogadorId);
 }
 
 async function removerJogadorExistente(jogadorId) {
@@ -557,12 +637,16 @@ async function adicionarNovoJogadorElenco() {
   const nome = document.getElementById('el_novo_nome').value;
   const numero = document.getElementById('el_novo_numero').value;
   const posicao = document.getElementById('el_novo_posicao').value;
+  const convidado = document.getElementById('el_novo_convidado').checked;
   const fotoFile = elencoFotoPendente['novo'] || null;
 
   if (!nome.trim()) { alert('Informe o nome do jogador.'); return; }
+  if (convidado && jaTemOutroConvidado(editingTeamId, null)) {
+    if (!confirm('Essa equipe já tem outro atleta marcado como convidado, e o regulamento permite só 1 por equipe. Salvar mesmo assim?')) return;
+  }
 
   try {
-    await addJogador(editingTeamId, { nome, numero, posicao, fotoFile });
+    await addJogador(editingTeamId, { nome, numero, posicao, fotoFile, convidado });
     elencoFotoPendente['novo'] = null;
     await refreshElenco();
   } catch (e) {

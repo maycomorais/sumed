@@ -77,7 +77,7 @@ async function uploadImageToImgbb(file, quality = 80) {
 async function fetchTeams(categoria) {
   let query = sb
     .from('equipes')
-    .select('id, nome, escudo_url, presidente, capitao, comissao_tecnica, diretor_marketing, categoria, jogadores(id, nome, numero, posicao, foto_url)')
+    .select('id, nome, escudo_url, presidente, capitao, comissao_tecnica, diretor_marketing, categoria, jogadores(id, nome, numero, posicao, foto_url, convidado)')
     .order('nome');
   if (categoria) query = query.eq('categoria', categoria);
   const { data, error } = await query;
@@ -113,12 +113,12 @@ async function createTeam({ nome, presidente, capitao, comissao_tecnica, diretor
   return equipe;
 }
 
-async function addJogador(equipeId, { nome, numero, posicao, fotoFile }) {
+async function addJogador(equipeId, { nome, numero, posicao, fotoFile, convidado }) {
   const foto_url = fotoFile ? await uploadImageToImgbb(fotoFile) : null;
 
   const { data: jogador, error } = await sb
     .from('jogadores')
-    .insert({ equipe_id: equipeId, nome, numero: numero || null, posicao: posicao || null, foto_url })
+    .insert({ equipe_id: equipeId, nome, numero: numero || null, posicao: posicao || null, foto_url, convidado: !!convidado })
     .select()
     .single();
   if (error) throw error;
@@ -350,7 +350,7 @@ async function saveModalidade(categoria, { modalidade, titulares, reservas }) {
 async function fetchEscalacao(partidaId) {
   const { data, error } = await sb
     .from('escalacoes')
-    .select('*, jogadores(nome, numero, posicao, foto_url)')
+    .select('*, jogadores(nome, numero, posicao, foto_url, convidado)')
     .eq('partida_id', partidaId);
   if (error) throw error;
   return data;
@@ -442,18 +442,37 @@ async function deletePenaltiCobranca(id) {
 async function fetchEscalacoesDaCategoria(categoria) {
   const { data, error } = await sb
     .from('escalacoes')
-    .select('*, jogadores(nome, posicao, foto_url), equipes(nome, categoria), partidas!inner(rodada, categoria)')
+    .select('*, jogadores(nome, posicao, foto_url, convidado), equipes(nome, categoria), partidas!inner(rodada, categoria, equipe_a, equipe_b, placar_a, placar_b)')
     .not('nota', 'is', null)
     .eq('partidas.categoria', categoria);
   if (error) throw error;
   return data;
 }
 
-async function updateJogador(jogadorId, { nome, numero, posicao, fotoFile }) {
+async function fetchGolsDaCategoria(categoria) {
+  const { data, error } = await sb
+    .from('gols')
+    .select('jogador_id, assistencia_jogador_id, equipe_id, partida_id, partidas!inner(categoria)')
+    .eq('partidas.categoria', categoria);
+  if (error) throw error;
+  return data;
+}
+
+async function fetchEventosDaCategoria(categoria) {
+  const { data, error } = await sb
+    .from('eventos_disciplinares')
+    .select('jogador_id, tipo, partida_id, partidas!inner(categoria)')
+    .eq('partidas.categoria', categoria);
+  if (error) throw error;
+  return data;
+}
+
+async function updateJogador(jogadorId, { nome, numero, posicao, fotoFile, convidado }) {
   const payload = {};
   if (nome !== undefined) payload.nome = nome;
   if (numero !== undefined) payload.numero = numero === '' ? null : Number(numero);
   if (posicao !== undefined) payload.posicao = posicao || null;
+  if (convidado !== undefined) payload.convidado = !!convidado;
   const { error } = await sb.from('jogadores').update(payload).eq('id', jogadorId);
   if (error) throw error;
 
@@ -518,4 +537,91 @@ function subscribeToMatchEvents(matchId, { onGol, onCartao } = {}) {
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'gols', filter: `partida_id=eq.${matchId}` }, (payload) => onGol && onGol(payload.new))
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'eventos_disciplinares', filter: `partida_id=eq.${matchId}` }, (payload) => onCartao && onCartao(payload.new))
     .subscribe();
+}
+
+// ---------------------------------------------------------------------
+// ENCERRAR PARTIDA (trava o placar — cartões/gols/assistência seguem editáveis)
+// ---------------------------------------------------------------------
+async function encerrarPartida(matchId) {
+  const { error } = await sb.from('partidas').update({ status: 'FINISHED', placar_travado: true }).eq('id', matchId);
+  if (error) throw error;
+}
+
+// ---------------------------------------------------------------------
+// ARTILHEIROS E ASSISTÊNCIAS (agregado a partir da tabela gols)
+// ---------------------------------------------------------------------
+async function fetchArtilheiros(categoria, limite = 10) {
+  const { data, error } = await sb
+    .from('gols')
+    .select('jogador_id, jogadores!gols_jogador_id_fkey(nome, foto_url), equipes(nome), partidas!inner(categoria)')
+    .eq('partidas.categoria', categoria);
+  if (error) throw error;
+
+  const contagem = {};
+  data.forEach(g => {
+    if (!g.jogador_id) return;
+    if (!contagem[g.jogador_id]) contagem[g.jogador_id] = { jogador_id: g.jogador_id, nome: g.jogadores?.nome, foto_url: g.jogadores?.foto_url, equipe: g.equipes?.nome, gols: 0 };
+    contagem[g.jogador_id].gols++;
+  });
+  return Object.values(contagem).sort((a, b) => b.gols - a.gols).slice(0, limite);
+}
+
+async function fetchAssistencias(categoria, limite = 10) {
+  const { data, error } = await sb
+    .from('gols')
+    .select('assistencia_jogador_id, assistente:assistencia_jogador_id(nome, foto_url), equipes(nome), partidas!inner(categoria)')
+    .eq('partidas.categoria', categoria)
+    .not('assistencia_jogador_id', 'is', null);
+  if (error) throw error;
+
+  const contagem = {};
+  data.forEach(g => {
+    const id = g.assistencia_jogador_id;
+    if (!contagem[id]) contagem[id] = { jogador_id: id, nome: g.assistente?.nome, foto_url: g.assistente?.foto_url, equipe: g.equipes?.nome, assistencias: 0 };
+    contagem[id].assistencias++;
+  });
+  return Object.values(contagem).sort((a, b) => b.assistencias - a.assistencias).slice(0, limite);
+}
+
+// ---------------------------------------------------------------------
+// DATA EM LOTE PARA TODA A RODADA
+// ---------------------------------------------------------------------
+async function bulkSetRoundDate(categoria, rodada, data) {
+  const { error } = await sb
+    .from('partidas')
+    .update({ data: data || null })
+    .eq('categoria', categoria)
+    .eq('rodada', rodada)
+    .eq('is_bye', false);
+  if (error) throw error;
+}
+
+// ---------------------------------------------------------------------
+// ESTATÍSTICAS DE UM JOGADOR (modal de perfil)
+// ---------------------------------------------------------------------
+async function fetchJogadorStats(jogadorId) {
+  const [golsRes, assistRes, eventosRes, escalacaoRes] = await Promise.all([
+    sb.from('gols').select('id', { count: 'exact', head: true }).eq('jogador_id', jogadorId),
+    sb.from('gols').select('id', { count: 'exact', head: true }).eq('assistencia_jogador_id', jogadorId),
+    sb.from('eventos_disciplinares').select('tipo').eq('jogador_id', jogadorId),
+    sb.from('escalacoes').select('nota').eq('jogador_id', jogadorId).not('nota', 'is', null),
+  ]);
+  if (golsRes.error) throw golsRes.error;
+  if (assistRes.error) throw assistRes.error;
+  if (eventosRes.error) throw eventosRes.error;
+  if (escalacaoRes.error) throw escalacaoRes.error;
+
+  const eventos = eventosRes.data || [];
+  const notas = (escalacaoRes.data || []).map(e => Number(e.nota));
+  const mediaNota = notas.length ? notas.reduce((a, b) => a + b, 0) / notas.length : null;
+
+  return {
+    gols: golsRes.count || 0,
+    assistencias: assistRes.count || 0,
+    cartaoAmarelo: eventos.filter(e => e.tipo === 'cartao_amarelo').length,
+    cartaoVermelho: eventos.filter(e => e.tipo === 'cartao_vermelho').length,
+    lesoes: eventos.filter(e => e.tipo === 'contusao').length,
+    mediaNota,
+    jogosAvaliados: notas.length,
+  };
 }

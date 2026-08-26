@@ -67,6 +67,14 @@
         <button class="round-btn" onclick="changeAdminRound(1)">❯</button>
       </div>
 
+      <div class="card" style="padding:12px;">
+        <p style="font-size:0.78rem; color:var(--text-muted); margin-bottom:8px;">Aplicar a mesma data a todos os jogos desta rodada:</p>
+        <div style="display:flex; gap:8px;">
+          <input type="date" id="bulk-round-date" class="form-control" style="flex:1;">
+          <button class="btn-secondary" onclick="aplicarDataRodadaUI()">Aplicar</button>
+        </div>
+      </div>
+
       <div id="admin-matches-list"></div>
     </section>
 
@@ -94,7 +102,9 @@
           </div>
           <div class="form-group">
             <label>Capitão</label>
-            <input type="text" id="team-captain" class="form-control">
+            <select id="team-captain" class="form-control">
+              <option value="">— Adicione jogadores para escolher —</option>
+            </select>
           </div>
           <div class="form-group">
             <label>Comissão Técnica</label>
@@ -188,6 +198,11 @@
         <div class="quick-body"><div class="quick-title">Formato do Campeonato</div></div>
         <div class="quick-arrow">↗</div>
       </div>
+      <div class="menu-list-item" onclick="switchAdminScreen('identidade')">
+        <div class="quick-icon">🎨</div>
+        <div class="quick-body"><div class="quick-title">Identidade Visual</div></div>
+        <div class="quick-arrow">↗</div>
+      </div>
       <div class="menu-list-item" onclick="switchAdminScreen('patrocinadores')">
         <div class="quick-icon">💰</div>
         <div class="quick-body"><div class="quick-title">Patrocinadores</div></div>
@@ -238,6 +253,39 @@
           <button type="submit" class="btn-action" style="width:100%;">Salvar Formato</button>
         </form>
       </div>
+    </section>
+
+    <!-- IDENTIDADE VISUAL -->
+    <section id="screen-identidade" class="screen">
+      <div style="display:flex; align-items:center; gap:10px; margin-bottom:14px;">
+        <button class="topbar-back" onclick="switchAdminScreen('mais')">←</button>
+        <span class="section-label" style="margin:0;">Identidade Visual</span>
+      </div>
+      <p class="section-sub">Vale pras duas categorias (Masculino/Feminino) — é a marca do campeonato inteiro, não de uma equipe.</p>
+
+      <div class="card">
+        <div class="card-title">Logo do Torneio</div>
+        <p style="color:var(--text-muted); font-size:0.78rem; margin-bottom:10px;">Aparece no canto esquerdo do cabeçalho do app público — e também vira o ícone do aplicativo quando alguém instala no celular.</p>
+        <div class="upload-field">
+          <img id="identidade-logo-preview" class="upload-preview" src="" style="display:none;">
+          <input type="file" id="identidade-logo-torneio" accept="image/*" class="form-control">
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Patrocinador Master</div>
+        <p style="color:var(--text-muted); font-size:0.78rem; margin-bottom:10px;">Aparece no canto direito do cabeçalho, no mesmo formato circular da logo do torneio.</p>
+        <div class="upload-field">
+          <img id="identidade-master-preview" class="upload-preview" src="" style="display:none;">
+          <input type="file" id="identidade-logo-master" accept="image/*" class="form-control">
+        </div>
+        <div class="form-group" style="margin-top:12px;">
+          <label>Link do patrocinador (opcional)</label>
+          <input type="url" id="identidade-master-link" class="form-control" placeholder="https://instagram.com/...">
+        </div>
+      </div>
+
+      <button class="btn-action" style="width:100%;" onclick="saveIdentidadeVisual()">Salvar Identidade Visual</button>
     </section>
 
     <!-- PATROCINADORES -->
