@@ -205,6 +205,28 @@ async function saveMatchScore(matchId, scoreA, scoreB) {
   if (error) throw error;
 }
 
+// ---------------------------------------------------------------------
+// W.O. (Art. 29º) — placar administrativo 3×0, sem coluna dedicada no
+// banco. Guardamos um marcador reconhecível dentro de sumula_nota para
+// conseguir contar ocorrências por equipe depois (ver contarOcorrenciasWO
+// em admin.js). O placar_travado impede edição manual do placar na aba
+// Placar depois de registrado.
+const WO_MARK_PREFIX = '[WO|responsavel=';
+
+async function registrarWO(matchId, equipeResponsavelId, equipeAId, equipeBId, notaExtra) {
+  const placarResponsavel = 0;
+  const placarAdversario = 3;
+  const payload = {
+    status: 'FINISHED',
+    placar_travado: true,
+    placar_a: equipeAId === equipeResponsavelId ? placarResponsavel : placarAdversario,
+    placar_b: equipeBId === equipeResponsavelId ? placarResponsavel : placarAdversario,
+    sumula_nota: `${WO_MARK_PREFIX}${equipeResponsavelId}] W.O. — equipe não esteve apta a iniciar a partida dentro da tolerância. Placar administrativo 3×0. Multa de 100.000 Gs aplicada.${notaExtra ? ' ' + notaExtra : ''}`,
+  };
+  const { error } = await sb.from('partidas').update(payload).eq('id', matchId);
+  if (error) throw error;
+}
+
 async function saveMatchMeta(matchId, { data, hora, local }) {
   const payload = {};
   if (data !== undefined) payload.data = data || null;
@@ -461,7 +483,7 @@ async function fetchGolsDaCategoria(categoria) {
 async function fetchEventosDaCategoria(categoria) {
   const { data, error } = await sb
     .from('eventos_disciplinares')
-    .select('jogador_id, tipo, partida_id, partidas!inner(categoria)')
+    .select('jogador_id, equipe_id, tipo, partida_id, partidas!inner(categoria)')
     .eq('partidas.categoria', categoria);
   if (error) throw error;
   return data;

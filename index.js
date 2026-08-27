@@ -9,7 +9,7 @@ const REGULAMENTO_PADRAO = `
   <br>
   <h3>2. PONTUAÇÃO E CRITÉRIOS DE DESEMPATE</h3>
   <p>Vitória: 3 pontos | Empate: 1 ponto | Derrota: 0 pontos.</p>
-  <p>Critérios em ordem: 1º Nº de Vitórias, 2º Gols Marcados (GP), 3º Saldo de Gols (SG), 4º Confronto Direto.</p>
+  <p>Critérios em ordem (Art. 18º): 1º Nº de Vitórias, 2º Gols Marcados (GP), 3º Saldo de Gols (SG), 4º Confronto Direto (quando aplicável), 5º Menor nº de cartões vermelhos, 6º Menor nº de cartões amarelos, 7º Sorteio.</p>
   <br>
   <h3>3. CLASSIFICAÇÃO</h3>
   <p><b>1º ao 8º:</b> Classificados para a SUMED Ouro.</p>
@@ -28,6 +28,7 @@ let state = {
   selectedRound: 1,
   teams: [],
   matches: [],
+  eventos: [],
 };
 
 // ---------------------------------------------------------------------
@@ -120,8 +121,9 @@ function aplicarLogosCabecalho(cfg) {
   const masterEl = document.getElementById('topbar-logo-master');
   if (cfg.patrocinador_master_logo) {
     const conteudo = `<img src="${cfg.patrocinador_master_logo}" alt="Patrocinador Master">`;
-    masterEl.innerHTML = cfg.patrocinador_master_link
-      ? `<a href="${cfg.patrocinador_master_link}" target="_blank" rel="noopener" style="display:block; width:100%; height:100%;">${conteudo}</a>`
+    const box = masterEl.querySelector('.sponsor-master-logo-box');
+    box.innerHTML = cfg.patrocinador_master_link
+      ? `<a href="${cfg.patrocinador_master_link}" target="_blank" rel="noopener">${conteudo}</a>`
       : conteudo;
     masterEl.style.display = 'flex';
   }
@@ -205,15 +207,39 @@ async function setCategoria(categoria) {
 // CARGA DE DADOS
 // ---------------------------------------------------------------------
 async function loadData() {
-  [state.teams, state.matches] = await Promise.all([
+  [state.teams, state.matches, state.eventos] = await Promise.all([
     fetchTeams(state.categoria),
     fetchMatches(state.categoria),
+    fetchEventosDaCategoria(state.categoria),
   ]);
+}
+
+// Confronto direto (Art. 18º, item 4) só é "aplicável" de forma segura
+// entre duas equipes específicas — comparamos os jogos que elas disputaram
+// entre si (pode ter sido ida e volta, dependendo do formato). Vitórias no
+// confronto decidem primeiro; persistindo o empate, gols marcados no
+// confronto direto. Retorna >0 se a equipe A leva vantagem, <0 se é a B,
+// 0 se não há confronto registrado entre as duas ou seguem empatadas nele.
+function confrontoDireto(equipeAId, equipeBId) {
+  let vA = 0, vB = 0, gA = 0, gB = 0;
+  state.matches.forEach(m => {
+    if (m.is_bye || m.status !== 'FINISHED' || m.placar_a === null || m.placar_b === null) return;
+    if (m.equipe_a === equipeAId && m.equipe_b === equipeBId) {
+      gA += m.placar_a; gB += m.placar_b;
+      if (m.placar_a > m.placar_b) vA++; else if (m.placar_b > m.placar_a) vB++;
+    } else if (m.equipe_a === equipeBId && m.equipe_b === equipeAId) {
+      gB += m.placar_a; gA += m.placar_b;
+      if (m.placar_a > m.placar_b) vB++; else if (m.placar_b > m.placar_a) vA++;
+    }
+  });
+  if (vA !== vB) return vA - vB;
+  if (gA !== gB) return gA - gB;
+  return 0;
 }
 
 function calculateStandings() {
   const stats = {};
-  state.teams.forEach(t => { stats[t.id] = { id: t.id, name: t.nome, P: 0, J: 0, V: 0, E: 0, D: 0, GP: 0, GC: 0, SG: 0 }; });
+  state.teams.forEach(t => { stats[t.id] = { id: t.id, name: t.nome, P: 0, J: 0, V: 0, E: 0, D: 0, GP: 0, GC: 0, SG: 0, CV: 0, CA: 0 }; });
 
   state.matches.forEach(m => {
     if (m.status === 'FINISHED' && m.placar_a !== null && m.placar_b !== null) {
@@ -229,12 +255,32 @@ function calculateStandings() {
     }
   });
 
+  // Art. 18º, itens 5 e 6: menor número de cartões vermelhos/amarelos.
+  (state.eventos || []).forEach(ev => {
+    const t = stats[ev.equipe_id];
+    if (!t) return;
+    if (ev.tipo === 'cartao_vermelho') t.CV++;
+    else if (ev.tipo === 'cartao_amarelo') t.CA++;
+  });
+
   Object.values(stats).forEach(t => t.SG = t.GP - t.GC);
+
+  // Art. 18º — Critérios de desempate, em ordem:
+  // 1) vitórias, 2) gols marcados, 3) saldo de gols, 4) confronto direto,
+  // 5) menos cartões vermelhos, 6) menos cartões amarelos, 7) sorteio.
+  // O "sorteio" (item 7) não pode ser feito por um algoritmo determinístico,
+  // então usamos ordem alfabética apenas como critério estável de exibição
+  // — nesse caso raríssimo, o sorteio real deve ser feito manualmente pela
+  // organização.
   return Object.values(stats).sort((a, b) => {
     if (b.P !== a.P) return b.P - a.P;
     if (b.V !== a.V) return b.V - a.V;
     if (b.GP !== a.GP) return b.GP - a.GP;
     if (b.SG !== a.SG) return b.SG - a.SG;
+    const cd = confrontoDireto(a.id, b.id);
+    if (cd !== 0) return -cd;
+    if (a.CV !== b.CV) return a.CV - b.CV;
+    if (a.CA !== b.CA) return a.CA - b.CA;
     return a.name.localeCompare(b.name);
   });
 }
@@ -785,25 +831,45 @@ function golsSofridosNaPartida(e) {
   return souEquipeA ? (p.placar_b ?? 0) : (p.placar_a ?? 0);
 }
 
-// Critérios de desempate quando duas ou mais notas empatam na mesma posição:
-// linha/ataque → 1) gols feitos 2) assistências 3) disciplina (menos cartão)
-// goleiro (GOL) → 1) gols sofridos (menos é melhor) 2) disciplina
-function melhorEntreEmpatados(candidatos, gols, eventos) {
-  return [...candidatos].sort((a, b) => {
-    const ehGoleiro = a.jogadores?.posicao === 'GOL';
-    if (ehGoleiro) {
-      const diffSofridos = golsSofridosNaPartida(a) - golsSofridosNaPartida(b);
-      if (diffSofridos !== 0) return diffSofridos;
-      const dA = statsDoJogadorNaPartida(a.jogador_id, a.partida_id, gols, eventos).disciplina;
-      const dB = statsDoJogadorNaPartida(b.jogador_id, b.partida_id, gols, eventos).disciplina;
-      return dA - dB;
-    }
-    const sA = statsDoJogadorNaPartida(a.jogador_id, a.partida_id, gols, eventos);
-    const sB = statsDoJogadorNaPartida(b.jogador_id, b.partida_id, gols, eventos);
-    if (sB.golsFeitos !== sA.golsFeitos) return sB.golsFeitos - sA.golsFeitos;
-    if (sB.assistencias !== sA.assistencias) return sB.assistencias - sA.assistencias;
-    return sA.disciplina - sB.disciplina;
-  })[0];
+// Seleção da Rodada / do Campeonato: 1 GOL, 2 FIXO (os dois melhores da
+// rodada), 1 ALA, 1 PIVÔ — 5 posições no total.
+const VAGAS_POR_POSICAO_SELECAO = { GOL: 1, FIXO: 2, ALA: 1, PIVO: 1 };
+
+// Comparador para ranquear candidatos de uma mesma posição, do melhor pro
+// pior: 1) maior nota; havendo empate —
+// linha/ataque → 2) gols feitos 3) assistências 4) disciplina (menos cartão)
+// goleiro (GOL) → 2) gols sofridos (menos é melhor) 3) disciplina
+function compararCandidatosSelecao(a, b, gols, eventos) {
+  const notaA = Number(a.nota), notaB = Number(b.nota);
+  if (notaB !== notaA) return notaB - notaA;
+
+  const ehGoleiro = a.jogadores?.posicao === 'GOL';
+  if (ehGoleiro) {
+    const diffSofridos = golsSofridosNaPartida(a) - golsSofridosNaPartida(b);
+    if (diffSofridos !== 0) return diffSofridos;
+    const dA = statsDoJogadorNaPartida(a.jogador_id, a.partida_id, gols, eventos).disciplina;
+    const dB = statsDoJogadorNaPartida(b.jogador_id, b.partida_id, gols, eventos).disciplina;
+    return dA - dB;
+  }
+  const sA = statsDoJogadorNaPartida(a.jogador_id, a.partida_id, gols, eventos);
+  const sB = statsDoJogadorNaPartida(b.jogador_id, b.partida_id, gols, eventos);
+  if (sB.golsFeitos !== sA.golsFeitos) return sB.golsFeitos - sA.golsFeitos;
+  if (sB.assistencias !== sA.assistencias) return sB.assistencias - sA.assistencias;
+  return sA.disciplina - sB.disciplina;
+}
+
+// Retorna os N melhores de uma posição (N vem de VAGAS_POR_POSICAO_SELECAO),
+// um por jogador (se por algum motivo o mesmo atleta tiver mais de uma
+// escalação na mesma rodada, fica só a melhor entrada dele).
+function melhoresDaPosicao(candidatos, gols, eventos, quantidade) {
+  const porJogador = {};
+  candidatos.forEach(c => {
+    const atual = porJogador[c.jogador_id];
+    if (!atual || compararCandidatosSelecao(c, atual, gols, eventos) < 0) porJogador[c.jogador_id] = c;
+  });
+  return Object.values(porJogador)
+    .sort((a, b) => compararCandidatosSelecao(a, b, gols, eventos))
+    .slice(0, quantidade);
 }
 
 function agruparMelhorPorRodada(escalacoes, gols, eventos) {
@@ -823,15 +889,24 @@ function agruparMelhorPorRodada(escalacoes, gols, eventos) {
       (porPosicao[pos] = porPosicao[pos] || []).push(e);
     });
 
+    // melhorPorPosicao guarda uma LISTA por posição (1 pra GOL/ALA/PIVÔ,
+    // 2 pra FIXO), pra manter compatibilidade com quem consome isso é
+    // achatado em array antes de render/acumulação.
     const melhorPorPosicao = {};
     Object.entries(porPosicao).forEach(([pos, candidatos]) => {
-      const maiorNota = Math.max(...candidatos.map(c => Number(c.nota)));
-      const empatados = candidatos.filter(c => Number(c.nota) === maiorNota);
-      melhorPorPosicao[pos] = empatados.length === 1 ? empatados[0] : melhorEntreEmpatados(empatados, gols, eventos);
+      const vagas = VAGAS_POR_POSICAO_SELECAO[pos] ?? 1;
+      melhorPorPosicao[pos] = melhoresDaPosicao(candidatos, gols, eventos, vagas);
     });
     resultado[rodada] = melhorPorPosicao;
   });
   return resultado;
+}
+
+// Achata o objeto { pos: [entradas] } em um array único de entradas,
+// pronto pra passar pro pitch (renderPitchSelecao) ou pra acumulação
+// da seleção do campeonato.
+function achatarSelecao(melhorPorPosicao) {
+  return Object.values(melhorPorPosicao).flat();
 }
 
 async function getDadosSelecaoCategoria() {
@@ -884,7 +959,7 @@ async function renderSelecaoRodada() {
       return;
     }
 
-    elSelecao.innerHTML = renderPitchSelecao(Object.values(melhorPorPosicao), gols, eventos);
+    elSelecao.innerHTML = renderPitchSelecao(achatarSelecao(melhorPorPosicao), gols, eventos);
   } catch (e) {
     console.error(e);
     elSelecao.innerHTML = '';
@@ -894,24 +969,28 @@ async function renderSelecaoRodada() {
 function calcularMelhorDoCampeonatoPorPosicao(agrupadoPorRodada) {
   const acumulado = {}; // posicao -> jogadorId -> { entry, pontos, somaNotas, qtdNotas }
   Object.values(agrupadoPorRodada).forEach(melhorPorPosicao => {
-    Object.entries(melhorPorPosicao).forEach(([pos, e]) => {
+    Object.entries(melhorPorPosicao).forEach(([pos, entradas]) => {
       acumulado[pos] = acumulado[pos] || {};
-      const id = e.jogador_id;
-      if (!acumulado[pos][id]) acumulado[pos][id] = { entry: e, pontos: 0, somaNotas: 0, qtdNotas: 0 };
-      acumulado[pos][id].pontos++;
-      acumulado[pos][id].somaNotas += Number(e.nota);
-      acumulado[pos][id].qtdNotas++;
+      entradas.forEach(e => {
+        const id = e.jogador_id;
+        if (!acumulado[pos][id]) acumulado[pos][id] = { entry: e, pontos: 0, somaNotas: 0, qtdNotas: 0 };
+        acumulado[pos][id].pontos++;
+        acumulado[pos][id].somaNotas += Number(e.nota);
+        acumulado[pos][id].qtdNotas++;
+      });
     });
   });
 
   const melhorPorPosicao = {};
   Object.entries(acumulado).forEach(([pos, candidatosObj]) => {
+    const vagas = VAGAS_POR_POSICAO_SELECAO[pos] ?? 1;
     const candidatos = Object.values(candidatosObj).sort((a, b) => {
       if (b.pontos !== a.pontos) return b.pontos - a.pontos;
       return (b.somaNotas / b.qtdNotas) - (a.somaNotas / a.qtdNotas);
     });
-    const melhor = candidatos[0];
-    melhorPorPosicao[pos] = { ...melhor.entry, nota: (melhor.somaNotas / melhor.qtdNotas).toFixed(1), _pontos: melhor.pontos };
+    melhorPorPosicao[pos] = candidatos.slice(0, vagas).map(melhor => ({
+      ...melhor.entry, nota: (melhor.somaNotas / melhor.qtdNotas).toFixed(1), _pontos: melhor.pontos,
+    }));
   });
   return melhorPorPosicao;
 }
@@ -931,15 +1010,15 @@ async function openSelecaoCampeonato() {
       return;
     }
 
-    const legendaHtml = Object.entries(melhorPorPosicao).map(([pos, e]) => `
+    const legendaHtml = Object.entries(melhorPorPosicao).flatMap(([pos, entradas]) => entradas.map(e => `
       <div style="display:flex; justify-content:space-between; padding:5px 0; border-top:1px solid var(--border-soft); font-size:0.82rem;">
         <span><b>${e.jogadores?.nome}</b> <span style="color:var(--text-muted);">${pos} · ${e.equipes?.nome || ''}</span></span>
         <b style="color:var(--gold-bright);">${e._pontos}× seleção</b>
       </div>
-    `).join('');
+    `)).join('');
 
     document.getElementById('modal-body').innerHTML = `
-      ${renderPitchSelecao(Object.values(melhorPorPosicao), gols, eventos)}
+      ${renderPitchSelecao(achatarSelecao(melhorPorPosicao), gols, eventos)}
       <div class="card" style="margin-top:12px;">
         <div class="card-title">Quantas vezes cada um foi convocado</div>
         ${legendaHtml}

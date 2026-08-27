@@ -10,6 +10,24 @@ let teams = [];
 let matches = [];
 let jogadoresPendentes = []; // linhas do formulário "Nova Equipe" ainda não salvas
 let minJogadoresExigidos = 11; // atualizado a partir do "Formato do Campeonato" da categoria
+const MAX_JOGADORES_POR_EQUIPE = 10; // limite fixo de elenco, independente do "Formato do Campeonato"
+
+// Retorna o número de camisa duplicado (como string) se houver colisão
+// entre os jogadores informados, ignorando linhas sem número preenchido e,
+// opcionalmente, uma linha/jogador específico (útil ao editar um já
+// existente, pra não comparar ele com ele mesmo).
+function numeroDuplicadoEntre(jogadores, { excetoRowId, excetoJogadorId } = {}) {
+  const contagem = {};
+  for (const j of jogadores) {
+    if (excetoRowId && j.rowId === excetoRowId) continue;
+    if (excetoJogadorId && j.id === excetoJogadorId) continue;
+    const num = (j.numero ?? '').toString().trim();
+    if (num === '') continue;
+    contagem[num] = (contagem[num] || 0) + 1;
+    if (contagem[num] > 1) return num;
+  }
+  return null;
+}
 
 function refreshCapitaoOptions() {
   const select = document.getElementById('team-captain');
@@ -253,6 +271,52 @@ async function loadAdminRound() {
   renderAdminRound();
 }
 
+// ---------------------------------------------------------------------
+// W.O. (Art. 29º) — placar administrativo 3×0, sem coluna dedicada no
+// banco. Guardamos um marcador reconhecível dentro de sumula_nota (ver
+// registrarWO em data.js) pra dar pra contar ocorrências por equipe.
+const WO_MARK_REGEX = /\[WO\|responsavel=([a-f0-9-]+)\]/;
+
+function parseWOResponsavel(m) {
+  const match = (m.sumula_nota || '').match(WO_MARK_REGEX);
+  return match ? match[1] : null;
+}
+
+// Conta em quantas partidas da categoria essa equipe já foi responsável
+// por um W.O. (considerando todas as rodadas já carregadas em `matches`).
+function contarOcorrenciasWO(equipeId) {
+  return matches.filter(m => parseWOResponsavel(m) === equipeId).length;
+}
+
+async function registrarWOUI(matchId, equipeResponsavelId) {
+  const m = matches.find(x => x.id === matchId);
+  if (!m) return;
+  const nomeEquipe = teams.find(t => t.id === equipeResponsavelId)?.nome || 'Equipe';
+  const seraOcorrenciaNumero = contarOcorrenciasWO(equipeResponsavelId) + 1;
+
+  const avisoOcorrencia = seraOcorrenciaNumero >= 2
+    ? `\n\n🚨 Esta será a ${seraOcorrenciaNumero}ª ocorrência de W.O. desta equipe na competição. Conforme Art. 29º, duas ocorrências podem resultar na exclusão da equipe da competição.`
+    : `\n\nEsta é a 1ª ocorrência de W.O. desta equipe na competição.`;
+
+  const confirmMsg = `Registrar W.O. da equipe ${nomeEquipe} nesta partida?\n\n`
+    + `Isso grava o placar administrativo 3×0 a favor do adversário, encerra e trava a partida (Art. 29º). A multa de 100.000 Gs deve ser controlada manualmente no financeiro.`
+    + avisoOcorrencia;
+
+  if (!confirm(confirmMsg)) return;
+
+  try {
+    await registrarWO(matchId, equipeResponsavelId, m.equipe_a, m.equipe_b);
+    if (seraOcorrenciaNumero >= 2) {
+      alert(`🚨 Atenção: esta é a ${seraOcorrenciaNumero}ª ocorrência de W.O. da equipe ${nomeEquipe}. Avalie a exclusão da equipe da competição conforme Art. 29º.`);
+    } else {
+      alert('W.O. registrado! Placar administrativo 3×0 aplicado e partida travada.');
+    }
+    await loadAdminRound();
+  } catch (e) {
+    alert('Erro ao registrar W.O.: ' + e.message);
+  }
+}
+
 function renderAdminRound() {
   document.getElementById('admin-round-title').innerText = `Rodada ${adminRound}`;
   const container = document.getElementById('admin-matches-list');
@@ -271,10 +335,12 @@ function renderAdminRound() {
     const tA = teams.find(x => x.id === m.equipe_a)?.nome || '?';
     const tB = teams.find(x => x.id === m.equipe_b)?.nome || '?';
     const travado = !!m.placar_travado;
+    const woResponsavel = parseWOResponsavel(m);
 
     return `
       <div class="card" style="${travado ? 'border-color: var(--gold);' : ''}">
         ${travado ? `<p style="color:var(--gold); font-size:0.72rem; font-weight:700; margin-bottom:8px;">🔒 PARTIDA ENCERRADA — placar travado</p>` : ''}
+        ${woResponsavel ? `<p style="color:var(--danger-strong); font-size:0.72rem; font-weight:700; margin-bottom:8px;">⚠️ Encerrada por W.O. — responsável: ${teams.find(t => t.id === woResponsavel)?.nome || 'equipe removida'}</p>` : ''}
         <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:12px;">
           <span style="font-weight:700; font-size:0.9rem;">${tA}</span>
           <input type="number" id="scA_${m.id}" value="${m.placar_a ?? ''}" class="form-control" style="width:54px; text-align:center; flex-shrink:0;" ${travado ? 'disabled' : ''}>
@@ -292,6 +358,15 @@ function renderAdminRound() {
           <button class="btn-secondary" onclick="openSumulaAdmin('${m.id}')">📋 Súmula</button>
         </div>
         ${!travado ? `<button class="btn-secondary" style="width:100%; margin-top:8px; border-color:var(--danger-strong); color:var(--danger-strong);" onclick="encerrarPartidaUI('${m.id}')">🔒 Encerrar Partida (trava o placar)</button>` : ''}
+        ${!travado ? `
+          <details style="margin-top:8px;">
+            <summary style="color:var(--danger-strong); font-size:0.78rem; cursor:pointer;">⚠️ Registrar W.O. (Art. 29º)</summary>
+            <div style="display:flex; gap:8px; margin-top:8px;">
+              <button class="btn-secondary" style="flex:1; font-size:0.75rem;" onclick="registrarWOUI('${m.id}','${m.equipe_a}')">${tA} não compareceu</button>
+              <button class="btn-secondary" style="flex:1; font-size:0.75rem;" onclick="registrarWOUI('${m.id}','${m.equipe_b}')">${tB} não compareceu</button>
+            </div>
+          </details>
+        ` : ''}
       </div>
     `;
   }).join('');
@@ -371,6 +446,10 @@ async function saveFormato(e) {
 // EQUIPES + JOGADORES (formulário dinâmico)
 // ---------------------------------------------------------------------
 function addJogadorRow() {
+  if (jogadoresPendentes.length >= MAX_JOGADORES_POR_EQUIPE) {
+    alert(`O elenco pode ter no máximo ${MAX_JOGADORES_POR_EQUIPE} atletas.`);
+    return;
+  }
   const id = 'jr_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
   jogadoresPendentes.push({ rowId: id, nome: '', numero: '', posicao: '', fotoFile: null, convidado: false });
 
@@ -432,6 +511,15 @@ async function saveTeam(e) {
     const jogadoresValidosCheck = jogadoresPendentes.filter(j => j.nome && j.nome.trim());
     if (jogadoresValidosCheck.length < minJogadoresExigidos) {
       alert(`Faltam jogadores: cadastre pelo menos ${minJogadoresExigidos} (formato configurado em "Formato do Campeonato") antes de salvar a equipe. Você preencheu ${jogadoresValidosCheck.length}.`);
+      return;
+    }
+    if (jogadoresValidosCheck.length > MAX_JOGADORES_POR_EQUIPE) {
+      alert(`O elenco pode ter no máximo ${MAX_JOGADORES_POR_EQUIPE} atletas. Você preencheu ${jogadoresValidosCheck.length} — remova ${jogadoresValidosCheck.length - MAX_JOGADORES_POR_EQUIPE} linha(s) antes de salvar.`);
+      return;
+    }
+    const numeroDup = numeroDuplicadoEntre(jogadoresValidosCheck);
+    if (numeroDup !== null) {
+      alert(`Dois ou mais atletas estão com a camisa nº ${numeroDup}. Corrija antes de salvar — cada número deve ser único dentro da equipe.`);
       return;
     }
     const convidados = jogadoresValidosCheck.filter(j => j.convidado).length;
@@ -605,6 +693,10 @@ async function salvarJogadorExistente(jogadorId) {
   const fotoFile = elencoFotoPendente[jogadorId] || null;
 
   if (!nome.trim()) { alert('O nome do jogador não pode ficar em branco.'); return; }
+  if (numeroJaUsadoNoElenco(editingTeamId, numero, jogadorId)) {
+    alert(`Já existe outro atleta desta equipe usando a camisa nº ${numero}. Escolha um número diferente.`);
+    return;
+  }
   if (convidado && jaTemOutroConvidado(editingTeamId, jogadorId)) {
     if (!confirm('Essa equipe já tem outro atleta marcado como convidado, e o regulamento permite só 1 por equipe. Salvar mesmo assim?')) return;
   }
@@ -621,6 +713,15 @@ async function salvarJogadorExistente(jogadorId) {
 function jaTemOutroConvidado(equipeId, excetoJogadorId) {
   const t = teams.find(x => x.id === equipeId);
   return (t?.jogadores || []).some(j => j.convidado && j.id !== excetoJogadorId);
+}
+
+// Verifica se algum outro atleta do elenco já usa este número de camisa.
+// numero vazio/undefined não conflita com nada (número ainda não definido).
+function numeroJaUsadoNoElenco(equipeId, numero, excetoJogadorId) {
+  const num = (numero ?? '').toString().trim();
+  if (num === '') return false;
+  const t = teams.find(x => x.id === equipeId);
+  return (t?.jogadores || []).some(j => j.id !== excetoJogadorId && (j.numero ?? '').toString().trim() === num);
 }
 
 async function removerJogadorExistente(jogadorId) {
@@ -641,6 +742,15 @@ async function adicionarNovoJogadorElenco() {
   const fotoFile = elencoFotoPendente['novo'] || null;
 
   if (!nome.trim()) { alert('Informe o nome do jogador.'); return; }
+  const t = teams.find(x => x.id === editingTeamId);
+  if ((t?.jogadores || []).length >= MAX_JOGADORES_POR_EQUIPE) {
+    alert(`Este elenco já tem ${MAX_JOGADORES_POR_EQUIPE} atletas, o máximo permitido. Remova alguém antes de adicionar um novo.`);
+    return;
+  }
+  if (numeroJaUsadoNoElenco(editingTeamId, numero, null)) {
+    alert(`Já existe um atleta desta equipe usando a camisa nº ${numero}. Escolha um número diferente.`);
+    return;
+  }
   if (convidado && jaTemOutroConvidado(editingTeamId, null)) {
     if (!confirm('Essa equipe já tem outro atleta marcado como convidado, e o regulamento permite só 1 por equipe. Salvar mesmo assim?')) return;
   }
@@ -801,7 +911,7 @@ async function deleteUserUI(userId) {
 const TIPO_EVENTO_LABEL = {
   cartao_amarelo: '🟨 Amarelo',
   cartao_vermelho: '🟥 Vermelho',
-  contusao: '🩹 Contusão',
+  contusao: '🚑 Contusão',
   punicao: '⚠️ Punição',
   suspensao: '⛔ Suspensão',
   outro: '📌 Outro',
@@ -854,12 +964,38 @@ async function saveEvento(e) {
 
   try {
     await createEvento({ jogador_id, equipe_id, partida_id, tipo, minuto, descricao, rodada_suspensao });
-    alert('Ocorrência registrada!');
+
+    if (tipo === 'cartao_amarelo') {
+      await avisarSeMultiploDeTresAmarelos(jogador_id);
+    } else {
+      alert('Ocorrência registrada!');
+    }
+
     document.getElementById('form-evento').reset();
     toggleSuspensaoField();
     renderAdminEventosList();
   } catch (err) {
     alert('Erro ao registrar: ' + err.message);
+  }
+}
+
+// Lembrete pro admin quando um atleta bate 3, 6, 9... cartões amarelos.
+// Isso NÃO aplica suspensão automática nenhuma — o controle de suspensão
+// continua 100% manual, é só um aviso pra organização não esquecer de
+// avaliar o caso conforme o regulamento.
+async function avisarSeMultiploDeTresAmarelos(jogadorId) {
+  try {
+    const eventosDoJogador = await fetchEventos({ jogadorId });
+    const totalAmarelos = eventosDoJogador.filter(e => e.tipo === 'cartao_amarelo').length;
+    if (totalAmarelos > 0 && totalAmarelos % 3 === 0) {
+      const nomeJogador = eventosDoJogador[0]?.jogadores?.nome || 'Este atleta';
+      alert(`🟨 Ocorrência registrada!\n\n⚠️ Atenção: ${nomeJogador} chegou a ${totalAmarelos} cartões amarelos. Avalie se cabe suspensão — o controle continua manual, nada é aplicado automaticamente.`);
+    } else {
+      alert('Ocorrência registrada!');
+    }
+  } catch (e) {
+    console.error(e);
+    alert('Ocorrência registrada!');
   }
 }
 
@@ -1087,67 +1223,235 @@ async function deletePenaltiUI(id) {
 }
 
 // --- Escalação & Notas ---
+// Limite fixo de titulares em campo ao mesmo tempo. Depois de atingido,
+// entradas adicionais só entram como substituição (sem limite de trocas —
+// quem sai pode retornar depois numa próxima substituição).
+const MAX_TITULARES_EM_CAMPO = 5;
+
+// Substituições são gravadas em eventos_disciplinares (tipo 'outro', não há
+// coluna própria no banco pra isso) com um marcador reconhecível na
+// descrição indicando quem SAIU — quem ENTROU já é o jogador_id do evento.
+const SUB_MARK_REGEX = /^\[SUB\|saiu=([a-f0-9-]+)\]/;
+
+function eventoESubstituicao(ev) {
+  return ev.tipo === 'outro' && SUB_MARK_REGEX.test(ev.descricao || '');
+}
+
+function parseSubstituicao(ev) {
+  const m = (ev.descricao || '').match(SUB_MARK_REGEX);
+  return m ? { id: ev.id, entrouId: ev.jogador_id, saiuId: m[1], criadoEm: ev.created_at, minuto: ev.minuto } : null;
+}
+
+function substituicoesDoTime(equipeId, eventosDaPartida) {
+  return eventosDaPartida
+    .filter(ev => ev.equipe_id === equipeId && eventoESubstituicao(ev))
+    .map(parseSubstituicao)
+    .sort((a, b) => new Date(a.criadoEm) - new Date(b.criadoEm));
+}
+
+// Quem está em campo agora: titulares + substituições aplicadas em ordem.
+function calcularEmCampo(equipeId, escalacaoDoTime, eventosDaPartida) {
+  const emCampo = new Set(escalacaoDoTime.filter(e => e.titular).map(e => e.jogador_id));
+  substituicoesDoTime(equipeId, eventosDaPartida).forEach(s => { emCampo.delete(s.saiuId); emCampo.add(s.entrouId); });
+  return emCampo;
+}
+
+// Todo mundo que participou em algum momento (titular OU entrou por
+// substituição) — só esses podem receber nota.
+function calcularParticipantes(equipeId, escalacaoDoTime, eventosDaPartida) {
+  const participantes = new Set(escalacaoDoTime.filter(e => e.titular).map(e => e.jogador_id));
+  substituicoesDoTime(equipeId, eventosDaPartida).forEach(s => participantes.add(s.entrouId));
+  return participantes;
+}
+
 async function renderEscalacaoTimes(tA, tB) {
   const container = document.getElementById('admin-escalacao-times');
   container.innerHTML = '<p style="color:var(--text-muted); font-size:0.85rem;">Carregando...</p>';
 
-  let cfg = MODALIDADE_PADRAO_FALLBACK;
-  try { cfg = await fetchModalidade(adminCategoria); } catch (e) { console.error(e); }
+  const m = matches.find(x => x.id === sumulaMatchId);
+  const partidaConcluida = m?.status === 'FINISHED';
 
   let escalacaoAtual = [];
-  try { escalacaoAtual = await fetchEscalacao(sumulaMatchId); } catch (e) { console.error(e); }
+  let eventosDaPartida = [];
+  try {
+    [escalacaoAtual, eventosDaPartida] = await Promise.all([
+      fetchEscalacao(sumulaMatchId),
+      fetchEventos({ partidaId: sumulaMatchId }),
+    ]);
+  } catch (e) { console.error(e); }
 
   const blocoTime = (t) => {
     if (!t) return '';
     const jogadores = t.jogadores || [];
-    const titularesCount = escalacaoAtual.filter(e => e.equipe_id === t.id && e.titular).length;
+    const escalacaoDoTime = escalacaoAtual.filter(e => e.equipe_id === t.id);
+    const titularesCount = escalacaoDoTime.filter(e => e.titular).length;
+    const emCampo = calcularEmCampo(t.id, escalacaoDoTime, eventosDaPartida);
+    const participantes = calcularParticipantes(t.id, escalacaoDoTime, eventosDaPartida);
+    const subs = substituicoesDoTime(t.id, eventosDaPartida);
+
+    const linhasJogadores = jogadores.map(j => {
+      const atual = escalacaoDoTime.find(e => e.jogador_id === j.id);
+      const ehTitular = !!atual?.titular;
+      // Trava a caixa de titular quando já tem 5 marcados e esta linha não é
+      // um deles — força o uso da substituição pra colocar mais alguém.
+      const desabilitarTitular = !ehTitular && titularesCount >= MAX_TITULARES_EM_CAMPO;
+      const participou = participantes.has(j.id);
+      const label = ehTitular ? '' : (emCampo.has(j.id) ? ' <span style="color:var(--gold-bright); font-size:0.7rem;">(em campo, substituto)</span>' : '');
+      return `
+        <div class="jogador-escalacao-linha" data-equipe-id="${t.id}" data-jogador-id="${j.id}" style="display:flex; align-items:center; gap:8px; padding:6px 0; border-top:1px solid var(--border-soft);">
+          <label style="display:flex; align-items:center; gap:4px; font-size:0.8rem; flex:1; ${desabilitarTitular ? 'opacity:0.45;' : ''}" title="${desabilitarTitular ? `Limite de ${MAX_TITULARES_EM_CAMPO} titulares atingido — use "Registrar substituição" pra colocar este jogador em campo.` : ''}">
+            <input type="checkbox" id="tit_${j.id}" ${ehTitular ? 'checked' : ''} ${desabilitarTitular ? 'disabled' : ''} onchange="atualizarContadorTitulares('${t.id}')"> ${j.numero ? '#' + j.numero + ' ' : ''}${j.nome}${label}
+          </label>
+          <input type="number" id="nota_${j.id}" class="form-control" style="width:64px;" step="0.1" min="0" max="10" placeholder="Nota"
+            value="${atual?.nota ?? ''}" ${(!partidaConcluida || !participou) ? 'disabled' : ''}
+            title="${!partidaConcluida ? 'Nota liberada só depois que a partida for concluída.' : (!participou ? 'Este jogador não participou da partida.' : '')}">
+        </div>
+      `;
+    }).join('') || '<p style="color:var(--text-muted); font-size:0.8rem;">Sem jogadores cadastrados.</p>';
+
+    const bancoIds = jogadores.map(j => j.id).filter(id => !emCampo.has(id));
+    const opcoesSai = jogadores.filter(j => emCampo.has(j.id))
+      .map(j => `<option value="${j.id}">${j.numero ? '#' + j.numero + ' ' : ''}${j.nome}</option>`).join('');
+    const opcoesEntra = jogadores.filter(j => bancoIds.includes(j.id))
+      .map(j => `<option value="${j.id}">${j.numero ? '#' + j.numero + ' ' : ''}${j.nome}</option>`).join('');
+
+    const historicoSubs = subs.length ? `
+      <div style="margin-top:8px; font-size:0.75rem; color:var(--text-muted);">
+        ${subs.map(s => {
+          const nomeEntra = jogadores.find(j => j.id === s.entrouId)?.nome || '?';
+          const nomeSai = jogadores.find(j => j.id === s.saiuId)?.nome || '?';
+          return `<div style="display:flex; justify-content:space-between; align-items:center; padding:3px 0;">
+            <span>🔁 Entrou ${nomeEntra}, saiu ${nomeSai}${s.minuto ? ' aos ' + s.minuto + "'" : ''}</span>
+            <button type="button" class="btn-remove" style="padding:2px 6px; font-size:0.7rem;" onclick="removerSubstituicaoUI('${s.id}')">✕</button>
+          </div>`;
+        }).join('')}
+      </div>
+    ` : '';
+
     return `
       <div style="margin-bottom:16px;" data-equipe-id="${t.id}">
-        <p style="font-weight:700; margin-bottom:8px;">${t.nome} <span class="contador-titulares-${t.id}" style="color:var(--text-muted); font-weight:400; font-size:0.78rem;">(${titularesCount}/${cfg.titulares} titulares)</span></p>
-        ${jogadores.map(j => {
-          const atual = escalacaoAtual.find(e => e.jogador_id === j.id);
-          return `
-            <div class="jogador-escalacao-linha" data-equipe-id="${t.id}" data-jogador-id="${j.id}" style="display:flex; align-items:center; gap:8px; padding:6px 0; border-top:1px solid var(--border-soft);">
-              <label style="display:flex; align-items:center; gap:4px; font-size:0.8rem; flex:1;">
-                <input type="checkbox" id="tit_${j.id}" ${atual?.titular ? 'checked' : ''} onchange="atualizarContadorTitulares('${t.id}')"> ${j.numero ? '#' + j.numero + ' ' : ''}${j.nome}
-              </label>
-              <input type="number" id="nota_${j.id}" class="form-control" style="width:64px;" step="0.1" min="0" max="10" placeholder="Nota" value="${atual?.nota ?? ''}">
-            </div>
-          `;
-        }).join('') || '<p style="color:var(--text-muted); font-size:0.8rem;">Sem jogadores cadastrados.</p>'}
+        <p style="font-weight:700; margin-bottom:8px;">${t.nome} <span class="contador-titulares-${t.id}" style="color:var(--text-muted); font-weight:400; font-size:0.78rem;">(${titularesCount}/${MAX_TITULARES_EM_CAMPO} titulares)</span></p>
+        ${linhasJogadores}
+        <div style="margin-top:10px; padding:8px; background:var(--surface-high); border-radius:8px;">
+          <p style="font-size:0.72rem; color:var(--text-muted); margin-bottom:6px;">🔁 Registrar substituição</p>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
+            <select id="sub_sai_${t.id}" class="form-control" style="font-size:0.8rem;">${opcoesSai || '<option value="">Ninguém em campo</option>'}</select>
+            <select id="sub_entra_${t.id}" class="form-control" style="font-size:0.8rem;">${opcoesEntra || '<option value="">Banco vazio</option>'}</select>
+          </div>
+          <div style="display:flex; gap:6px; margin-top:6px;">
+            <input type="number" id="sub_minuto_${t.id}" class="form-control" placeholder="Minuto (opcional)" style="flex:1;">
+            <button type="button" class="btn-secondary" style="flex-shrink:0;" onclick="registrarSubstituicaoUI('${t.id}')">Substituir</button>
+          </div>
+          ${historicoSubs}
+        </div>
       </div>
     `;
   };
 
   container.innerHTML = blocoTime(tA) + blocoTime(tB) + `
+    ${!partidaConcluida ? `<p style="color:var(--text-muted); font-size:0.78rem; margin-bottom:8px;">📌 As notas ficam liberadas depois que o placar da partida for salvo (status concluída), e só pra quem participou.</p>` : ''}
     <button class="btn-action" style="width:100%; margin-top:6px;" onclick="salvarEscalacaoCompleta()">💾 Salvar Escalação Completa</button>
   `;
 }
 
 function atualizarContadorTitulares(equipeId) {
+  // Trabalha só com o DOM (sem recarregar do banco) pra não descartar
+  // marcações de outros jogadores que o admin ainda não salvou.
   const linhas = document.querySelectorAll(`.jogador-escalacao-linha[data-equipe-id="${equipeId}"]`);
   let count = 0;
-  linhas.forEach(l => { if (document.getElementById(`tit_${l.dataset.jogadorId}`).checked) count++; });
+  linhas.forEach(l => { if (document.getElementById(`tit_${l.dataset.jogadorId}`)?.checked) count++; });
+
   document.querySelectorAll(`.contador-titulares-${equipeId}`).forEach(el => {
     el.textContent = el.textContent.replace(/^\(\d+/, `(${count}`);
   });
+
+  // Trava caixas de titular ainda não marcadas quando o limite é atingido,
+  // pra forçar o uso de "Registrar substituição" a partir daqui.
+  linhas.forEach(l => {
+    const chk = document.getElementById(`tit_${l.dataset.jogadorId}`);
+    if (!chk || chk.checked) return;
+    chk.disabled = count >= MAX_TITULARES_EM_CAMPO;
+    const label = chk.closest('label');
+    if (label) {
+      label.style.opacity = chk.disabled ? '0.45' : '';
+      label.title = chk.disabled ? `Limite de ${MAX_TITULARES_EM_CAMPO} titulares atingido — use "Registrar substituição" pra colocar este jogador em campo.` : '';
+    }
+  });
+}
+
+async function registrarSubstituicaoUI(equipeId) {
+  const saiId = document.getElementById(`sub_sai_${equipeId}`).value;
+  const entraId = document.getElementById(`sub_entra_${equipeId}`).value;
+  const minuto = document.getElementById(`sub_minuto_${equipeId}`).value;
+
+  if (!saiId || !entraId) { alert('Escolha quem sai e quem entra.'); return; }
+  if (saiId === entraId) { alert('Escolha jogadores diferentes.'); return; }
+
+  const t = teams.find(x => x.id === equipeId);
+  const nomeSai = t?.jogadores?.find(j => j.id === saiId)?.nome || '?';
+  const nomeEntra = t?.jogadores?.find(j => j.id === entraId)?.nome || '?';
+
+  try {
+    await createEvento({
+      jogador_id: entraId,
+      equipe_id: equipeId,
+      partida_id: sumulaMatchId,
+      tipo: 'outro',
+      minuto,
+      descricao: `[SUB|saiu=${saiId}] Substituição: entrou ${nomeEntra} no lugar de ${nomeSai}${minuto ? ' aos ' + minuto + "'" : ''}.`,
+    });
+    const m = matches.find(x => x.id === sumulaMatchId);
+    const tA = teams.find(x => x.id === m?.equipe_a);
+    const tB = teams.find(x => x.id === m?.equipe_b);
+    await renderEscalacaoTimes(tA, tB);
+  } catch (e) {
+    alert('Erro ao registrar substituição: ' + e.message);
+  }
+}
+
+async function removerSubstituicaoUI(eventoId) {
+  if (!confirm('Remover esta substituição?')) return;
+  try {
+    await deleteEvento(eventoId);
+    const m = matches.find(x => x.id === sumulaMatchId);
+    const tA = teams.find(x => x.id === m?.equipe_a);
+    const tB = teams.find(x => x.id === m?.equipe_b);
+    await renderEscalacaoTimes(tA, tB);
+  } catch (e) {
+    alert('Erro ao remover substituição: ' + e.message);
+  }
 }
 
 async function salvarEscalacaoCompleta() {
   const linhas = document.querySelectorAll('.jogador-escalacao-linha');
   if (!linhas.length) { alert('Nenhum jogador para salvar.'); return; }
 
+  const m = matches.find(x => x.id === sumulaMatchId);
+  const partidaConcluida = m?.status === 'FINISHED';
+
   try {
+    // Recalcula participantes por equipe pra não gravar nota de quem não jogou,
+    // mesmo que o campo de nota tenha ficado com algum valor residual.
+    const eventosDaPartida = await fetchEventos({ partidaId: sumulaMatchId });
+    const cacheParticipantes = {};
+
     await Promise.all(Array.from(linhas).map(l => {
       const jogadorId = l.dataset.jogadorId;
       const equipeId = l.dataset.equipeId;
       const titular = document.getElementById(`tit_${jogadorId}`).checked;
-      const nota = document.getElementById(`nota_${jogadorId}`).value;
+
+      if (!cacheParticipantes[equipeId]) {
+        const escalacaoDoTime = Array.from(document.querySelectorAll(`.jogador-escalacao-linha[data-equipe-id="${equipeId}"]`))
+          .map(el => ({ jogador_id: el.dataset.jogadorId, titular: document.getElementById(`tit_${el.dataset.jogadorId}`).checked }));
+        cacheParticipantes[equipeId] = calcularParticipantes(equipeId, escalacaoDoTime, eventosDaPartida);
+      }
+      const participou = cacheParticipantes[equipeId].has(jogadorId);
+      const nota = (partidaConcluida && participou) ? document.getElementById(`nota_${jogadorId}`).value : '';
+
       return saveEscalacaoJogador(sumulaMatchId, equipeId, jogadorId, { titular, nota });
     }));
 
     alert('Escalação completa salva!');
-    const m = matches.find(x => x.id === sumulaMatchId);
     const tA = teams.find(t => t.id === m?.equipe_a);
     const tB = teams.find(t => t.id === m?.equipe_b);
     await renderEscalacaoTimes(tA, tB);
