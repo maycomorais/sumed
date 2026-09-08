@@ -1057,9 +1057,11 @@ function editTeam(teamId) {
   document.getElementById('team-staff').value = t.comissao_tecnica === 'A definir' ? '' : t.comissao_tecnica;
   document.getElementById('team-marketing').value = (t.diretor_marketing && t.diretor_marketing !== 'A definir') ? t.diretor_marketing : '';
   if (t.escudo_url) {
-    document.getElementById('escudo-preview').src = t.escudo_url;
-    document.getElementById('escudo-preview').style.display = 'block';
-  }
+  document.getElementById('escudo-preview').src = t.escudo_url;
+  document.getElementById('escudo-preview').setAttribute('loading', 'lazy');
+  document.getElementById('escudo-preview').setAttribute('decoding', 'async');
+  document.getElementById('escudo-preview').style.display = 'block';
+}
 
   document.getElementById('btn-add-jogador-row').style.display = 'none';
   renderElencoEdicao(t);
@@ -1100,7 +1102,7 @@ function renderElencoEdicao(t) {
   const existentesHtml = jogadores.map(j => `
     <div class="jogador-card">
       <div class="jogador-card-header">
-        <img class="jogador-card-avatar" id="elprev_${j.id}" src="${j.foto_url || ''}" style="${j.foto_url ? '' : 'display:none;'}">
+        <img class="jogador-card-avatar" id="elprev_${j.id}" src="${j.foto_url || ''}" style="${j.foto_url ? '' : 'display:none;'}" loading="lazy" decoding="async" onerror="this.style.display='none';">
         <input type="text" class="form-control" style="flex:1;" id="el_nome_${j.id}" value="${j.nome}" placeholder="Nome">
       </div>
       <div class="jogador-card-row">
@@ -1250,16 +1252,16 @@ function renderAdminTeamsList() {
   if (!container) return;
 
   container.innerHTML = teams.map(t => `
-    <div class="card" style="display:flex; align-items:center; gap:12px; margin-bottom:8px;">
-      ${t.escudo_url ? `<img src="${t.escudo_url}" class="upload-preview">` : '<div style="font-size:1.8rem;">🛡️</div>'}
-      <div style="flex:1;">
-        <b>${t.nome}</b>
-        <p style="font-size:0.8rem; color:var(--text-muted);">${(t.jogadores || []).length} jogador(es) cadastrado(s)</p>
-      </div>
-      <button class="btn-secondary" onclick="editTeam('${t.id}')">Editar</button>
-      ${podeExcluirEquipe() ? `<button class="btn-remove" title="Excluir equipe" onclick="deleteTeamUI('${t.id}', '${(t.nome || '').replace(/'/g, "\\'")}')">✕</button>` : ''}
+  <div class="card" style="display:flex; align-items:center; gap:12px; margin-bottom:8px;">
+    ${t.escudo_url ? `<img src="${t.escudo_url}" class="upload-preview" loading="lazy" decoding="async" onerror="this.onerror=null; this.src=''; this.parentElement.innerHTML='<div style=\\'font-size:1.8rem;\\'>🛡️</div>';">` : '<div style="font-size:1.8rem;">🛡️</div>'}
+    <div style="flex:1;">
+      <b>${t.nome}</b>
+      <p style="font-size:0.8rem; color:var(--text-muted);">${(t.jogadores || []).length} jogador(es) cadastrado(s)</p>
     </div>
-  `).join('') || '<p style="color:var(--text-muted); text-align:center; padding:16px 0;">Nenhuma equipe cadastrada nesta categoria ainda.</p>';
+    <button class="btn-secondary" onclick="editTeam('${t.id}')">Editar</button>
+    ${podeExcluirEquipe() ? `<button class="btn-remove" title="Excluir equipe" onclick="deleteTeamUI('${t.id}', '${(t.nome || '').replace(/'/g, "\\'")}')">✕</button>` : ''}
+  </div>
+`).join('') || '<p style="color:var(--text-muted); text-align:center; padding:16px 0;">Nenhuma equipe cadastrada nesta categoria ainda.</p>';
 }
 
 // Excluir equipe: mesma regra de quem pode CRIAR equipe (AdminMaster/Presidente).
@@ -1323,7 +1325,7 @@ async function renderAdminSponsorsList() {
     const sponsors = await fetchAllSponsors();
     container.innerHTML = sponsors.map(s => `
       <div class="card" style="display:flex; align-items:center; gap:12px; margin-bottom:8px; ${s.ativo ? '' : 'opacity:0.5;'}">
-        <img src="${s.logo_url}" class="upload-preview" style="border-radius:6px;">
+        <img src="${s.logo_url}" class="upload-preview" style="border-radius:6px;" loading="lazy" decoding="async" onerror="this.onerror=null; this.src=''; this.parentElement.innerHTML='<div style=\\'font-size:1.5rem;\\'>💰</div>';">
         <div style="flex:1;">
           <b>${s.nome}</b>
           <p style="font-size:0.8rem; color:var(--text-muted);">${s.link || 'sem link'}</p>
@@ -1988,8 +1990,11 @@ async function initIdentidadeTab() {
   try {
     const cfg = await fetchConfig('identidade_visual', IDENTIDADE_PADRAO);
     if (cfg.logo_torneio) {
-      document.getElementById('identidade-logo-preview').src = cfg.logo_torneio;
-      document.getElementById('identidade-logo-preview').style.display = 'block';
+      const preview = document.getElementById('identidade-logo-preview');
+      preview.src = cfg.logo_torneio;
+      preview.loading = 'lazy';
+      preview.decoding = 'async';
+      preview.style.display = 'block';
     }
     if (cfg.patrocinador_master_logo) {
       document.getElementById('identidade-master-preview').src = cfg.patrocinador_master_logo;

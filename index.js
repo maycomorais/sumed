@@ -116,7 +116,7 @@ async function loadIdentidadeVisual() {
 
 function aplicarLogosCabecalho(cfg) {
   if (cfg.logo_torneio) {
-    document.getElementById('topbar-logo-torneio').innerHTML = `<img src="${cfg.logo_torneio}" alt="Logo do torneio">`;
+    document.getElementById('topbar-logo-torneio').innerHTML = `<img src="${cfg.logo_torneio}" alt="Logo do torneio" loading="lazy" decoding="async" onerror="this.onerror=null; this.style.display='none';">`;
   }
   const masterEl = document.getElementById('topbar-logo-master');
   if (cfg.patrocinador_master_logo) {
@@ -320,11 +320,16 @@ async function renderHero() {
         ${aoVivo ? `<div class="hero-live-tag"><span class="dot"></span> Ao Vivo</div>` : ''}
         <div class="hero-vs">
           <div class="hero-team">
-            <div class="hero-shield" style="cursor:pointer;" onclick="openTeamProfile('${teamA?.id}')">${teamA?.escudo_url ? `<img src="${teamA.escudo_url}">` : '⚽'}</div>
+            <div class="hero-shield" style="cursor:pointer;" onclick="openTeamProfile('${teamA?.id}')">
+              ${teamA?.escudo_url ? `<img src="${teamA.escudo_url}" loading="lazy" decoding="async" onerror="this.onerror=null; this.src=''; this.parentElement.innerHTML='⚽';">` : '⚽'}
+            </div>
             <div class="hero-team-name" style="cursor:pointer;" onclick="openTeamProfile('${teamA?.id}')">${teamA?.nome || 'A definir'}</div>
           </div>
           <div class="hero-team">
-            <div class="hero-shield" style="cursor:pointer;" onclick="openTeamProfile('${teamB?.id}')">${teamB?.escudo_url ? `<img src="${teamB.escudo_url}">` : '🏁'}</div>
+            <div class="hero-team">
+          <div class="hero-shield" style="cursor:pointer;" onclick="openTeamProfile('${teamB?.id}')">
+            ${teamB?.escudo_url ? `<img src="${teamB.escudo_url}" loading="lazy" decoding="async" onerror="this.onerror=null; this.src=''; this.parentElement.innerHTML='🏁';">` : '🏁'}
+          </div>
             <div class="hero-team-name" style="cursor:pointer;" onclick="openTeamProfile('${teamB?.id}')">${teamB?.nome || 'A definir'}</div>
           </div>
         </div>
@@ -481,7 +486,9 @@ function renderTabela() {
     return `
       <tr class="${zoneClass}">
         <td class="pos-cell">${pos}º</td>
-        <td><div class="standings-shield" onclick="openTeamProfile('${t.id}')">${escudoHtml}</div></td>
+        <td><div class="standings-shield" onclick="openTeamProfile('${t.id}')">
+          ${equipe?.escudo_url ? `<img src="${equipe.escudo_url}" loading="lazy" decoding="async" onerror="this.onerror=null; this.src=''; this.parentElement.innerHTML='🛡️';">` : '🛡️'}
+        </div></td>
         <td onclick="openTeamProfile('${t.id}')">${t.name}</td>
         <td class="pts-cell">${t.P}</td>
         <td>${t.J}</td>
@@ -503,15 +510,17 @@ async function renderArtilheiros() {
   try {
     const artilheiros = await fetchArtilheiros(state.categoria);
     el.innerHTML = artilheiros.length
-      ? `<div class="standings-wrap">${artilheiros.map((a, i) => `
-          <div style="display:flex; align-items:center; gap:10px; padding:8px 12px; border-top:${i === 0 ? 'none' : '1px solid var(--border-soft)'}; cursor:pointer;" onclick="openJogadorPerfil('${a.jogador_id}')">
-            <b style="width:18px; color:var(--text-muted);">${i + 1}º</b>
-            <div class="roster-avatar" style="width:32px; height:32px;">${a.foto_url ? `<img src="${a.foto_url}">` : '⚽'}</div>
-            <div style="flex:1;"><b>${a.nome}</b> <span style="color:var(--text-muted); font-size:0.78rem;">${a.equipe || ''}</span></div>
-            <b style="color:var(--gold-bright);">${a.gols}</b>
-          </div>
-        `).join('')}</div>`
-      : '<p style="color:var(--text-muted); font-size:0.85rem;">Nenhum gol registrado ainda.</p>';
+  ? `<div class="standings-wrap">${artilheiros.map((a, i) => `
+      <div style="display:flex; align-items:center; gap:10px; padding:8px 12px; border-top:${i === 0 ? 'none' : '1px solid var(--border-soft)'}; cursor:pointer;" onclick="openJogadorPerfil('${a.jogador_id}')">
+        <b style="width:18px; color:var(--text-muted);">${i + 1}º</b>
+        <div class="roster-avatar" style="width:32px; height:32px;">
+          ${a.foto_url ? `<img src="${a.foto_url}" loading="lazy" decoding="async" onerror="this.onerror=null; this.src=''; this.parentElement.innerHTML='⚽';">` : '⚽'}
+        </div>
+        <div style="flex:1;"><b>${a.nome}</b> <span style="color:var(--text-muted); font-size:0.78rem;">${a.equipe || ''}</span></div>
+        <b style="color:var(--gold-bright);">${a.gols}</b>
+      </div>
+    `).join('')}</div>`
+  : '<p style="color:var(--text-muted); font-size:0.85rem;">Nenhum gol registrado ainda.</p>';
   } catch (e) {
     el.innerHTML = `<p style="color:var(--danger-strong); font-size:0.85rem;">Erro: ${e.message}</p>`;
   }
@@ -527,7 +536,7 @@ async function renderAssistencias() {
       ? `<div class="standings-wrap">${assistencias.map((a, i) => `
           <div style="display:flex; align-items:center; gap:10px; padding:8px 12px; border-top:${i === 0 ? 'none' : '1px solid var(--border-soft)'}; cursor:pointer;" onclick="openJogadorPerfil('${a.jogador_id}')">
             <b style="width:18px; color:var(--text-muted);">${i + 1}º</b>
-            <div class="roster-avatar" style="width:32px; height:32px;">${a.foto_url ? `<img src="${a.foto_url}">` : '🅰️'}</div>
+            <div class="roster-avatar" style="width:32px; height:32px;">${a.foto_url ? `<img src="${a.foto_url}" loading="lazy" decoding="async" onerror="this.onerror=null;this.src=''; this.parentElement.innerHTML='🅰️';">` : '🅰️'}</div>
             <div style="flex:1;"><b>${a.nome}</b> <span style="color:var(--text-muted); font-size:0.78rem;">${a.equipe || ''}</span></div>
             <b style="color:var(--gold-bright);">${a.assistencias}</b>
           </div>
@@ -617,7 +626,7 @@ function renderEquipes() {
 
   grid.innerHTML = state.teams.map(t => `
     <div class="team-tile" onclick="openTeamProfile('${t.id}')">
-      <div class="team-tile-shield">${t.escudo_url ? `<img src="${t.escudo_url}">` : '🛡️'}</div>
+      <div class="team-tile-shield">${t.escudo_url ? `<img src="${t.escudo_url}" loading="lazy" decoding="async" onerror="this.onerror=null; this.src=''; this.parentElement.innerHTML='🛡️';">` : '🛡️'}</div>
       <div class="team-tile-name">${t.nome}</div>
     </div>
   `).join('') || '<p style="color:var(--text-muted); grid-column:1/-1; text-align:center; padding:20px 0;">Nenhuma equipe cadastrada nesta categoria ainda.</p>';
@@ -658,7 +667,8 @@ async function openTeamProfile(teamId) {
 
   el.innerHTML = `
     <div class="team-header">
-      <div class="team-header-shield">${t.escudo_url ? `<img src="${t.escudo_url}">` : '<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:2rem;background:var(--surface-high);">🛡️</div>'}</div>
+       <div class="team-header-shield">
+      ${t.escudo_url ? `<img src="${t.escudo_url}" loading="lazy" decoding="async" onerror="this.onerror=null; this.src=''; this.parentElement.innerHTML='<div style=\\'width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:2rem;background:var(--surface-high);\\'>🛡️</div>';">` : '<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:2rem;background:var(--surface-high);">🛡️</div>'}
       <div class="team-header-name">${t.nome}</div>
       <div class="team-header-tags">
         <span class="team-tag">🧢 Capitão: ${t.capitao}</span>
@@ -697,9 +707,11 @@ async function openTeamProfile(teamId) {
       <div class="card-title">Elenco <span style="color:var(--text-muted); font-weight:400;">${(t.jogadores || []).length} Jogadores</span></div>
       ${(t.jogadores || []).length ? t.jogadores.map(j => `
         <div class="roster-item ${j.nome === t.capitao ? 'captain' : ''}" style="cursor:pointer;" onclick="openJogadorPerfil('${j.id}')">
-          <div class="roster-avatar">${j.foto_url ? `<img src="${j.foto_url}">` : (j.posicao === 'Goleiro' || j.posicao === 'G' ? 'G' : '')}</div>
+          <div class="roster-avatar">
+            ${j.foto_url ? `<img src="${j.foto_url}" loading="lazy" decoding="async" onerror="this.onerror=null; this.src=''; this.parentElement.innerHTML='${j.posicao === 'Goleiro' || j.posicao === 'G' ? 'G' : ''}';">` : (j.posicao === 'Goleiro' || j.posicao === 'G' ? 'G' : '')}
+          </div>
           <div>
-            <div class="roster-name">${j.nome} ${j.nome === t.capitao ? '⭐' : ''}${j.convidado ? ' 👤' : ''}</div>
+            <div class="roster-name">${j.nome} ${j.nome === t.capitao ? '©' : ''}${j.convidado ? ' 👤' : ''}</div>
             <div class="roster-role">${j.posicao || 'Posição não informada'}${j.numero ? ' • #' + j.numero : ''}</div>
           </div>
         </div>
@@ -1278,7 +1290,8 @@ async function openJogadorPerfil(jogadorId) {
   document.getElementById('modal-title').innerText = jogador.nome;
   document.getElementById('modal-body').innerHTML = `
     <div style="text-align:center; margin-bottom:16px;">
-      <div class="team-header-shield" style="border-radius:50%; margin:0 auto 10px;">${jogador.foto_url ? `<img src="${jogador.foto_url}">` : '<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:1.8rem;background:var(--surface-high);">👤</div>'}</div>
+    <div class="team-header-shield" style="border-radius:50%; margin:0 auto 10px;">
+      ${jogador.foto_url ? `<img src="${jogador.foto_url}" loading="lazy" decoding="async" onerror="this.onerror=null; this.src=''; this.parentElement.innerHTML='<div style=\\'width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:1.8rem;background:var(--surface-high);\\'>👤</div>';">` : '<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:1.8rem;background:var(--surface-high);">👤</div>'}
       <h4>${jogador.nome} ${jogador.convidado ? '👤' : ''}</h4>
       <p style="color:var(--text-muted); font-size:0.85rem; margin-top:4px; cursor:pointer;" onclick="irParaEquipe('${equipe?.id}')">${equipe?.nome || ''} <span style="text-decoration:underline;">→</span></p>
       <p style="color:var(--gold); font-size:0.8rem; margin-top:2px;">${jogador.posicao || 'Posição não informada'}${jogador.numero ? ' · #' + jogador.numero : ''}</p>

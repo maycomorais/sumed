@@ -11,23 +11,59 @@
 // chave, é só substituir a constante abaixo.
 const IMGBB_API_KEY = 'd6ade30e77d706a440f7c03f08af33c4';
 
-function convertToWebP(file, quality = 80) {
+function convertToWebP(blob, quality = 70) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onerror = () => reject(new Error('Falha ao carregar a imagem para conversão.'));
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0);
+      canvas.toBlob(
+        (webpBlob) => (webpBlob ? resolve(webpBlob) : reject(new Error('Falha ao converter imagem para WebP.'))),
+        'image/webp',
+        quality / 100
+      );
+    };
+    img.src = URL.createObjectURL(blob);
+  });
+}
+
+/**
+ * Redimensiona uma imagem para caber dentro de maxWidth × maxHeight,
+ * mantendo a proporção. Retorna um Blob (imagem original ainda não convertida).
+ * @param {File} file
+ * @param {number} maxWidth
+ * @param {number} maxHeight
+ * @returns {Promise<Blob>}
+ */
+function resizeImage(file, maxWidth = 600, maxHeight = 600) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onerror = () => reject(new Error('Falha ao ler o arquivo de imagem.'));
     reader.onload = (e) => {
       const img = new Image();
-      img.onerror = () => reject(new Error('Falha ao carregar a imagem para conversão.'));
+      img.onerror = () => reject(new Error('Falha ao carregar a imagem para redimensionamento.'));
       img.onload = () => {
+        let width = img.width;
+        let height = img.height;
+        if (width > maxWidth || height > maxHeight) {
+          const ratio = Math.min(maxWidth / width, maxHeight / height);
+          width = Math.round(width * ratio);
+          height = Math.round(height * ratio);
+        }
         const canvas = document.createElement('canvas');
-        canvas.width = img.width;
-        canvas.height = img.height;
+        canvas.width = width;
+        canvas.height = height;
         const ctx = canvas.getContext('2d');
-        ctx.drawImage(img, 0, 0);
+        ctx.drawImage(img, 0, 0, width, height);
+        // Exporta como JPEG (ou PNG) para depois converter para WebP no próximo passo
         canvas.toBlob(
-          (blob) => (blob ? resolve(blob) : reject(new Error('Falha ao converter imagem para WebP.'))),
-          'image/webp',
-          quality / 100
+          (blob) => (blob ? resolve(blob) : reject(new Error('Falha ao redimensionar a imagem.'))),
+          'image/jpeg',
+          0.92
         );
       };
       img.src = e.target.result;
@@ -37,12 +73,16 @@ function convertToWebP(file, quality = 80) {
 }
 
 /**
- * Envia uma imagem para o ImgBB (convertendo para WebP antes) e retorna a URL direta.
- * @param {File} file
- * @param {number} quality - Qualidade WebP (0-100), padrão 80
- * @returns {Promise<string>}
+ * Envia uma imagem para o ImgBB (redimensiona e converte para WebP antes)
+ * @param {File} file - arquivo de imagem original
+ * @param {Object} options
+ * @param {number} options.quality - qualidade WebP (0-100), padrão 70
+ * @param {number} options.maxWidth - largura máxima, padrão 600
+ * @param {number} options.maxHeight - altura máxima, padrão 600
+ * @returns {Promise<string>} URL da imagem no ImgBB
  */
-async function uploadImageToImgbb(file, quality = 80) {
+async function uploadImageToImgbb(file, options = {}) {
+  const { quality = 70, maxWidth = 600, maxHeight = 600 } = options;
   const tiposPermitidos = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
   if (!tiposPermitidos.includes(file.type)) {
     throw new Error('Formato inválido. Use JPG, PNG, WEBP ou GIF.');
@@ -51,7 +91,9 @@ async function uploadImageToImgbb(file, quality = 80) {
     throw new Error('Imagem muito grande. Máximo 10MB (limite do ImgBB).');
   }
 
-  const webpBlob = await convertToWebP(file, quality);
+  // Redimensiona (se necessário) e depois converte para WebP
+  const resizedBlob = await resizeImage(file, maxWidth, maxHeight);
+  const webpBlob = await convertToWebP(resizedBlob, quality);
 
   const formData = new FormData();
   formData.append('key', IMGBB_API_KEY);

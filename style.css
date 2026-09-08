@@ -1738,3 +1738,17 @@ tr.zone-elim td:nth-child(3) {
   align-items: center;
   justify-content: center;
 }
+
+/* =====================================================================
+   FALLBACK PARA IMAGENS QUEBRADAS (usado com onerror)
+   ===================================================================== */
+img[src=""],
+img:not([src]) {
+  opacity: 0;
+}
+/* Os placeholders são aplicados via JavaScript, mas garantimos
+   que elementos com erro de carregamento não fiquem visíveis. */
+img[onerror] {
+  min-width: 24px;
+  min-height: 24px;
+}
