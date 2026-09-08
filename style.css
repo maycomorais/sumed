@@ -1,7 +1,8 @@
+@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Montserrat:wght@400;600;700;800&display=swap');
 /* =====================================================================
-   SUMED 2026 — Design System (fiel aos protótipos: bottom nav, grafite
-   escuro, acentos dourados). Tokens baseados no DESIGN.md.
+   SUMED 2026 — Design System
    ===================================================================== */
+
 :root {
   --bg: #111415;
   --surface: #191c1d;
@@ -51,10 +52,13 @@ h1,
 h2,
 h3,
 h4,
-.headline {
+.headline,
+.topbar-title,
+.section-label,
+.card-title {
   font-family: "Bebas Neue", "Segoe UI", sans-serif;
-  font-weight: 800;
-  letter-spacing: -0.05em;
+  font-weight: 400;
+  letter-spacing: -0.03em;
 }
 
 /* ---------------------------------------------------------------------
@@ -417,12 +421,18 @@ h4,
   background: var(--surface);
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-lg);
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
 }
 table.standings {
   width: 100%;
   border-collapse: collapse;
   font-size: 0.85rem;
+}
+table.standings th,
+table.standings td {
+  white-space: nowrap;
 }
 table.standings th {
   background: var(--surface-high);
@@ -439,8 +449,29 @@ table.standings td {
   border-top: 1px solid var(--border-soft);
 }
 table.standings td:nth-child(2) {
+  padding: 6px 4px;
+}
+table.standings td:nth-child(3) {
   text-align: left;
   font-weight: 700;
+  cursor: pointer;
+}
+table.standings .standings-shield {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--surface-high);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+table.standings .standings-shield img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 table.standings .pos-cell {
   font-weight: 800;
@@ -460,7 +491,7 @@ tr.zone-elim td:first-child {
 tr.zone-elim {
   opacity: 0.75;
 }
-tr.zone-elim td:nth-child(2) {
+tr.zone-elim td:nth-child(3) {
   text-decoration: line-through;
 }
 .pts-cell {
@@ -607,6 +638,187 @@ tr.zone-elim td:nth-child(2) {
   font-size: 2rem;
   margin: 18px 0 4px;
   filter: drop-shadow(0 0 8px var(--gold-glow));
+}
+
+/* ---------------------------------------------------------------------
+   SORTEIO AO VIVO (admin) — overlay em tela cheia, efeito roleta
+--------------------------------------------------------------------- */
+.sorteio-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 500;
+  background: radial-gradient(circle at 50% 15%, #1a1a12 0%, #0a0a08 65%, #050504 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 20px 16px calc(20px + env(safe-area-inset-bottom));
+  overflow-y: auto;
+}
+.sorteio-overlay-close {
+  position: absolute;
+  top: 14px;
+  right: 16px;
+  background: none;
+  border: none;
+  color: #fff;
+  font-size: 1.6rem;
+  line-height: 1;
+  cursor: pointer;
+  z-index: 2;
+  padding: 6px;
+}
+.sorteio-overlay-header {
+  font-size: 0.82rem;
+  letter-spacing: 0.06em;
+  color: var(--gold-bright);
+  text-transform: uppercase;
+  font-weight: 800;
+  text-align: center;
+  margin: 6px 0 4px;
+}
+.sorteio-overlay-body {
+  flex: 1;
+  width: 100%;
+  max-width: 480px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  padding: 12px 0;
+}
+.sorteio-overlay-etapa {
+  font-size: 1.05rem;
+  font-weight: 800;
+  color: #fff;
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  min-height: 2.4em;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.sorteio-roleta-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+}
+.sorteio-roleta-shield {
+  width: min(58vw, 62vh, 280px);
+  height: min(58vw, 62vh, 280px);
+  border-radius: 50%;
+  background: var(--surface-high);
+  border: 5px solid var(--border-soft);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  font-size: 4rem;
+  transition: border-color 0.15s ease;
+}
+.sorteio-roleta-shield img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.sorteio-roleta-shield.sorteio-girando {
+  border-color: var(--gold);
+  animation: sorteio-roleta-pulse 0.22s ease-in-out infinite alternate;
+}
+.sorteio-roleta-shield.sorteio-girando.sorteio-tensao {
+  border-color: var(--danger-strong);
+  animation: sorteio-roleta-tensao 0.14s ease-in-out infinite;
+}
+.sorteio-roleta-shield.sorteio-revelado {
+  border-color: var(--gold-bright);
+  box-shadow: 0 0 40px var(--gold-glow);
+  animation: sorteio-roleta-confirma 0.4s ease-out;
+}
+@keyframes sorteio-roleta-pulse {
+  from { transform: scale(1); }
+  to { transform: scale(1.035); }
+}
+@keyframes sorteio-roleta-tensao {
+  0% { transform: translateX(-3px) scale(1.02); }
+  50% { transform: translateX(3px) scale(1.06); }
+  100% { transform: translateX(-3px) scale(1.02); }
+}
+@keyframes sorteio-roleta-confirma {
+  0% { transform: scale(0.9); }
+  60% { transform: scale(1.08); }
+  100% { transform: scale(1); }
+}
+.sorteio-roleta-nome {
+  font-size: 1.35rem;
+  font-weight: 800;
+  color: #fff;
+  text-align: center;
+  min-height: 1.7em;
+}
+.sorteio-btn-sortear {
+  width: 100%;
+  max-width: 280px;
+  font-size: 1.05rem;
+  padding: 15px;
+}
+.sorteio-btn-pular {
+  width: 100%;
+  max-width: 280px;
+  font-size: 0.8rem;
+  opacity: 0.75;
+}
+.sorteio-folga-reveal {
+  text-align: center;
+  animation: sorteio-roleta-confirma 0.5s ease-out;
+}
+.sorteio-folga-shield {
+  width: min(46vw, 200px);
+  height: min(46vw, 200px);
+  margin: 0 auto 10px;
+  border-radius: 50%;
+  background: var(--surface-high);
+  border: 5px solid var(--gold-bright);
+  box-shadow: 0 0 30px var(--gold-glow);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  font-size: 3rem;
+}
+.sorteio-folga-shield img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.sorteio-folga-nome {
+  font-size: 1.3rem;
+  font-weight: 800;
+  color: #fff;
+}
+.sorteio-folga-legenda {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+.sorteio-overlay-progresso {
+  width: 100%;
+  max-width: 480px;
+  border-top: 1px solid var(--border-soft);
+  padding-top: 10px;
+  margin-top: 10px;
+}
+.sorteio-progresso-lista {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 130px;
+  overflow-y: auto;
+}
+.sorteio-progresso-item {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  text-align: center;
 }
 
 /* ---------------------------------------------------------------------

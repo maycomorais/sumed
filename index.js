@@ -475,13 +475,21 @@ function renderTabela() {
     if (pos <= 8) zoneClass = 'zone-ouro';
     else if (pos <= 12) zoneClass = 'zone-prata';
 
+    const equipe = state.teams.find(x => x.id === t.id);
+    const escudoHtml = equipe?.escudo_url ? `<img src="${equipe.escudo_url}">` : '🛡️';
+
     return `
       <tr class="${zoneClass}">
         <td class="pos-cell">${pos}º</td>
-        <td>${t.name}</td>
+        <td><div class="standings-shield" onclick="openTeamProfile('${t.id}')">${escudoHtml}</div></td>
+        <td onclick="openTeamProfile('${t.id}')">${t.name}</td>
         <td class="pts-cell">${t.P}</td>
         <td>${t.J}</td>
         <td>${t.V}</td>
+        <td>${t.E}</td>
+        <td>${t.D}</td>
+        <td>${t.GP}</td>
+        <td>${t.GC}</td>
         <td>${t.SG > 0 ? '+' : ''}${t.SG}</td>
       </tr>
     `;
@@ -533,6 +541,17 @@ async function renderAssistencias() {
 // ---------------------------------------------------------------------
 // CHAVES
 // ---------------------------------------------------------------------
+// A fase eliminatória (Ouro/Prata) só existe depois que a fase de grupos
+// termina — ou seja, quando toda partida "de verdade" (não-bye) da
+// categoria já está com status FINISHED. Enquanto isso não acontecer, a
+// tabela ainda pode mudar de posição a qualquer momento, então exibir um
+// chaveamento "provisório" seria enganoso pro torcedor.
+function faseClassificatoriaCompleta() {
+  const partidasReais = state.matches.filter(m => !m.is_bye);
+  if (!partidasReais.length) return false;
+  return partidasReais.every(m => m.status === 'FINISHED');
+}
+
 function setFase(fase) {
   state.fase = fase;
   document.querySelectorAll('#screen-chaves .pill-toggle:nth-of-type(2) .pill-btn').forEach(b => b.classList.remove('active'));
@@ -552,10 +571,23 @@ function bracketCardHtml(idLabel, t1, t2) {
 }
 
 function renderChaves() {
-  const standings = calculateStandings();
   const qfContainer = document.getElementById('qf-matches');
   if (!qfContainer) return;
 
+  const completa = faseClassificatoriaCompleta();
+  document.getElementById('chaves-aguardando').style.display = completa ? 'none' : 'block';
+  document.getElementById('chaves-fase-toggle').style.display = completa ? 'flex' : 'none';
+  document.getElementById('fase-ouro-content').style.display = completa && state.fase !== 'prata' ? 'block' : 'none';
+  document.getElementById('fase-prata-content').style.display = completa && state.fase === 'prata' ? 'block' : 'none';
+
+  if (!completa) {
+    const restantes = state.matches.filter(m => !m.is_bye && m.status !== 'FINISHED').length;
+    document.getElementById('chaves-aguardando-sub').innerText =
+      `O SUMED Ouro e o SUMED Prata só são definidos depois que a fase de grupos terminar. Faltam ${restantes} partida(s) para o encerramento da fase de grupos.`;
+    return;
+  }
+
+  const standings = calculateStandings();
   const qfPairs = [
     { id: 'Q1', t1: standings[0], t2: standings[7] },
     { id: 'Q2', t1: standings[3], t2: standings[4] },
@@ -667,7 +699,7 @@ async function openTeamProfile(teamId) {
         <div class="roster-item ${j.nome === t.capitao ? 'captain' : ''}" style="cursor:pointer;" onclick="openJogadorPerfil('${j.id}')">
           <div class="roster-avatar">${j.foto_url ? `<img src="${j.foto_url}">` : (j.posicao === 'Goleiro' || j.posicao === 'G' ? 'G' : '')}</div>
           <div>
-            <div class="roster-name">${j.nome} ${j.nome === t.capitao ? '⭐' : ''}${j.convidado ? ' 🌟' : ''}</div>
+            <div class="roster-name">${j.nome} ${j.nome === t.capitao ? '⭐' : ''}${j.convidado ? ' 👤' : ''}</div>
             <div class="roster-role">${j.posicao || 'Posição não informada'}${j.numero ? ' • #' + j.numero : ''}</div>
           </div>
         </div>
@@ -1128,7 +1160,7 @@ function renderPitchPlayer(e, icones, mostrarEquipe) {
       <div class="pitch-player-badges">${icones(e.jogador_id, e.partida_id)}</div>
       <div class="pitch-player-avatar">${j.foto_url ? `<img src="${j.foto_url}">` : (j.numero || '')}</div>
       ${e.nota !== null ? `<div class="pitch-player-nota">${Number(e.nota).toFixed(1)}</div>` : ''}
-      <div class="pitch-player-name">${j.nome ? j.nome.split(' ')[0] : ''}${j.convidado ? ' 🌟' : ''}</div>
+      <div class="pitch-player-name">${j.nome ? j.nome.split(' ')[0] : ''}${j.convidado ? ' 👤' : ''}</div>
       ${mostrarEquipe ? `<div class="pitch-player-team">${e.equipes?.nome || ''}</div>` : ''}
     </div>
   `;
@@ -1144,7 +1176,7 @@ function renderReservasBloco(t, escalacaoDoTime, icones) {
         <div class="roster-item" style="cursor:pointer; margin-bottom:6px;" onclick="openJogadorPerfil('${e.jogador_id}')">
           <div class="roster-avatar">${e.jogadores?.foto_url ? `<img src="${e.jogadores.foto_url}">` : (e.jogadores?.numero || '')}</div>
           <div style="flex:1;">
-            <div class="roster-name">${e.jogadores?.nome || ''}${e.jogadores?.convidado ? ' 🌟' : ''}</div>
+            <div class="roster-name">${e.jogadores?.nome || ''}${e.jogadores?.convidado ? ' 👤' : ''}</div>
             <div class="roster-role">${e.jogadores?.posicao || ''} ${icones(e.jogador_id)}</div>
           </div>
           ${e.nota !== null ? `<b style="color:var(--gold-bright);">${Number(e.nota).toFixed(1)}</b>` : ''}
@@ -1247,7 +1279,7 @@ async function openJogadorPerfil(jogadorId) {
   document.getElementById('modal-body').innerHTML = `
     <div style="text-align:center; margin-bottom:16px;">
       <div class="team-header-shield" style="border-radius:50%; margin:0 auto 10px;">${jogador.foto_url ? `<img src="${jogador.foto_url}">` : '<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:1.8rem;background:var(--surface-high);">👤</div>'}</div>
-      <h4>${jogador.nome} ${jogador.convidado ? '🌟' : ''}</h4>
+      <h4>${jogador.nome} ${jogador.convidado ? '👤' : ''}</h4>
       <p style="color:var(--text-muted); font-size:0.85rem; margin-top:4px; cursor:pointer;" onclick="irParaEquipe('${equipe?.id}')">${equipe?.nome || ''} <span style="text-decoration:underline;">→</span></p>
       <p style="color:var(--gold); font-size:0.8rem; margin-top:2px;">${jogador.posicao || 'Posição não informada'}${jogador.numero ? ' · #' + jogador.numero : ''}</p>
     </div>

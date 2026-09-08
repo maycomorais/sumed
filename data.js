@@ -146,8 +146,14 @@ async function fetchMatches(categoria) {
 // real é a RLS (partidas_insert/delete só admin_master/presidente).
 // IMPORTANTE: o delete/insert abaixo é filtrado por categoria — gerar o
 // sorteio do masculino NUNCA apaga as partidas do feminino, e vice-versa.
-async function gerarSorteio(teamIds, categoria) {
-  let teams = [...teamIds];
+// Monta o calendário completo (todos os jogos de todas as rodadas), de
+// forma PURA (sem tocar no banco) — recebe a ordem já definida dos times
+// (a ordem é o que determina os confrontos rodada a rodada no método do
+// círculo). O time no índice 0 nunca roda de posição, então ele é sempre
+// quem enfrenta o "BYE" (se houver) logo na Rodada 1 — é assim que
+// conseguimos garantir uma equipe de folga forçada na primeira rodada.
+function construirCalendarioRoundRobin(teamIdsOrdenados, categoria) {
+  let teams = [...teamIdsOrdenados];
   if (teams.length % 2 !== 0) teams.push('BYE');
 
   const numTeams = teams.length;
@@ -186,8 +192,57 @@ async function gerarSorteio(teamIds, categoria) {
     teams.splice(1, 0, teams.pop());
   }
 
-  // Apaga só o calendário anterior DESSA categoria e grava o novo (RLS
-  // garante que só admin_master/presidente conseguem executar delete/insert).
+  return newMatches;
+}
+
+// Apaga TODO o calendário (todas as rodadas, placares, súmulas por
+// cascata) de uma categoria, sem gerar um novo sorteio no lugar — é o
+// "zerar sorteio" pedido pelo admin pra não precisar mexer direto no banco.
+// Só apaga a categoria informada; a outra categoria fica intacta.
+// ---------------------------------------------------------------------
+// CONFIGURAÇÃO DO PRÉ-SORTEIO (folga forçada + pares restritos)
+// ---------------------------------------------------------------------
+// Fica salva no banco (não só em memória) porque quem CONFIGURA essas
+// regras (AdminMaster) e quem EXECUTA o sorteio ao vivo (Presidente) podem
+// estar em sessões/dispositivos diferentes — sem persistir, o Presidente
+// nunca veria o que o AdminMaster configurou.
+//
+// Schema esperado (ajuste os nomes se o seu schema real for diferente):
+//   tabela: sorteio_config
+//   colunas: categoria (text, chave única) | folga_rodada1_id (uuid, null)
+//            | pares_restritos (jsonb, default '[]')
+async function carregarConfigSorteio(categoria) {
+  const { data, error } = await sb
+    .from('sorteio_config')
+    .select('*')
+    .eq('categoria', categoria)
+    .maybeSingle();
+  if (error) throw error;
+  return {
+    folgaRodada1Id: data?.folga_rodada1_id || null,
+    paresRestritos: data?.pares_restritos || [],
+  };
+}
+
+async function salvarConfigSorteio(categoria, { folgaRodada1Id, paresRestritos }) {
+  const { error } = await sb.from('sorteio_config').upsert({
+    categoria,
+    folga_rodada1_id: folgaRodada1Id || null,
+    pares_restritos: paresRestritos || [],
+  });
+  if (error) throw error;
+}
+
+async function zerarSorteio(categoria) {
+  const { error } = await sb.from('partidas').delete().eq('categoria', categoria);
+  if (error) throw error;
+}
+
+// Grava (substituindo) o calendário de uma categoria no banco. Separado de
+// construirCalendarioRoundRobin pra podermos gerar/validar o calendário
+// várias vezes em memória (retries de restrição, animação do sorteio) antes
+// de decidir se ele vai ser realmente persistido.
+async function salvarCalendario(categoria, newMatches) {
   const { error: deleteError } = await sb.from('partidas').delete().eq('categoria', categoria);
   if (deleteError) throw deleteError;
 
@@ -197,7 +252,74 @@ async function gerarSorteio(teamIds, categoria) {
   return newMatches;
 }
 
+// Algoritmo Round-Robin (Berger) — versão simples, sem restrições. Mantida
+// por compatibilidade; o painel novo usa gerarCalendarioComRestricoes.
+// allowedRoles é checado ANTES de chamar isto no admin.js, mas a garantia
+// real é a RLS (partidas_insert/delete só admin_master/presidente).
+// IMPORTANTE: o delete/insert abaixo é filtrado por categoria — gerar o
+// sorteio do masculino NUNCA apaga as partidas do feminino, e vice-versa.
+async function gerarSorteio(teamIds, categoria) {
+  const newMatches = construirCalendarioRoundRobin(teamIds, categoria);
+  return salvarCalendario(categoria, newMatches);
+}
+
+function embaralhar(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+// Confere se algum par "restrito" (que não pode se encontrar antes da
+// Rodada 3) acabou caindo na Rodada 1 ou 2 desse calendário.
+function calendarioRespeitaRestricoes(matches, paresRestritos) {
+  if (!paresRestritos || !paresRestritos.length) return true;
+  const chavesRestritas = new Set(paresRestritos.map(([a, b]) => [a, b].sort().join('|')));
+  return matches.every(m => {
+    if (m.is_bye || m.rodada > 2) return true;
+    const chave = [m.equipe_a, m.equipe_b].sort().join('|');
+    return !chavesRestritas.has(chave);
+  });
+}
+
+// Gera um calendário completo respeitando:
+//  - folgaRodada1Id: equipe que OBRIGATORIAMENTE folga na Rodada 1 (só faz
+//    sentido/é aplicável quando o número de equipes é ímpar).
+//  - paresRestritos: lista de pares [idA, idB] que não podem se enfrentar
+//    nas Rodadas 1 e 2 (regra de "cabeças de chave" pedida pela organização).
+// Estratégia: sorteia (embaralha) a ordem das demais equipes e testa; se
+// alguma restrição cair nas 2 primeiras rodadas, sorteia de novo. Como a
+// posição 0 nunca muda de lugar entre rodadas, colocar a equipe da folga
+// nessa posição garante o efeito antes mesmo de checar as restrições.
+function gerarCalendarioComRestricoes(teamIds, categoria, { folgaRodada1Id, paresRestritos = [], maxTentativas = 2000 } = {}) {
+  const restantes = folgaRodada1Id ? teamIds.filter(id => id !== folgaRodada1Id) : [...teamIds];
+
+  for (let tentativa = 0; tentativa < maxTentativas; tentativa++) {
+    const ordenados = folgaRodada1Id ? [folgaRodada1Id, ...embaralhar(restantes)] : embaralhar(restantes);
+    const matches = construirCalendarioRoundRobin(ordenados, categoria);
+    if (calendarioRespeitaRestricoes(matches, paresRestritos)) {
+      return matches;
+    }
+  }
+
+  throw new Error('Não foi possível gerar um calendário respeitando todos os pares restritos configurados. Remova algum par ou tente novamente.');
+}
+
 async function saveMatchScore(matchId, scoreA, scoreB) {
+  // Mesma trava do setMatchLive: se a partida já está com placar_travado,
+  // não deixamos essa função reabrir o status (ex: limpar o placar voltaria
+  // pra SCHEDULED). A UI já desabilita os campos quando travado, mas
+  // garantimos aqui também, pra não depender só do front-end.
+  const { data: atual, error: fetchError } = await sb
+    .from('partidas')
+    .select('placar_travado')
+    .eq('id', matchId)
+    .single();
+  if (fetchError) throw fetchError;
+  if (atual?.placar_travado) return; // nada a fazer — placar travado, ignora silenciosamente
+
   const payload = scoreA === '' || scoreB === ''
     ? { placar_a: null, placar_b: null, status: 'SCHEDULED' }
     : { placar_a: parseInt(scoreA), placar_b: parseInt(scoreB), status: 'FINISHED' };
@@ -227,13 +349,23 @@ async function registrarWO(matchId, equipeResponsavelId, equipeAId, equipeBId, n
   if (error) throw error;
 }
 
-async function saveMatchMeta(matchId, { data, hora, local }) {
+async function saveMatchMeta(matchId, { data, hora, local, rodada }) {
   const payload = {};
   if (data !== undefined) payload.data = data || null;
   if (hora !== undefined) payload.hora = hora || null;
   if (local !== undefined) payload.local = local || 'Campo Principal';
+  if (rodada !== undefined) payload.rodada = Number(rodada);
   const { error } = await sb.from('partidas').update(payload).eq('id', matchId);
   if (error) throw error;
+}
+
+// Transfere uma partida para outra rodada (ex: adiamento por chuva, campo
+// indisponível etc). Mantém o restante do calendário intacto — só move essa
+// partida específica. Reaproveita saveMatchMeta pra também já poder ajustar
+// data/hora/local nesse mesmo passo, já que normalmente andam juntos.
+async function transferirPartidaDeRodada(matchId, novaRodada, { data, hora, local } = {}) {
+  if (!novaRodada || Number(novaRodada) < 1) throw new Error('Informe uma rodada de destino válida.');
+  await saveMatchMeta(matchId, { rodada: Number(novaRodada), data, hora, local });
 }
 
 // ---------------------------------------------------------------------
@@ -351,6 +483,34 @@ async function updateTeam(teamId, { nome, presidente, capitao, comissao_tecnica,
     return url;
   }
   return null;
+}
+
+// ---------------------------------------------------------------------
+// EXCLUSÃO DE EQUIPE
+// ---------------------------------------------------------------------
+// Exclui a equipe e tudo que depende diretamente dela: partidas em que ela
+// jogou (nessa categoria), jogadores do elenco e as escalações que
+// referenciam esses jogadores/essa equipe. Gols e eventos disciplinares
+// ficam a cargo do ON DELETE CASCADE das FKs em jogadores/partidas — se o
+// banco não tiver essa cascata configurada, ajuste aqui antes de usar em
+// produção. A ordem importa: dependentes primeiro, equipe por último.
+async function deleteTeam(teamId) {
+  // 1) escalações que citam a equipe diretamente
+  await sb.from('escalacoes').delete().eq('equipe_id', teamId);
+
+  // 2) jogadores do elenco (e suas escalações/gols/eventos, via cascade)
+  const { error: jogadoresError } = await sb.from('jogadores').delete().eq('equipe_id', teamId);
+  if (jogadoresError) throw jogadoresError;
+
+  // 3) partidas em que a equipe participou (como mandante ou visitante)
+  const { error: partidasAError } = await sb.from('partidas').delete().eq('equipe_a', teamId);
+  if (partidasAError) throw partidasAError;
+  const { error: partidasBError } = await sb.from('partidas').delete().eq('equipe_b', teamId);
+  if (partidasBError) throw partidasBError;
+
+  // 4) a equipe em si
+  const { error } = await sb.from('equipes').delete().eq('id', teamId);
+  if (error) throw error;
 }
 
 // ---------------------------------------------------------------------
@@ -508,6 +668,19 @@ async function updateJogador(jogadorId, { nome, numero, posicao, fotoFile, convi
 // TRANSMISSÃO AO VIVO
 // ---------------------------------------------------------------------
 async function setMatchLive(matchId, aoVivo) {
+  // Trava de segurança: uma partida com placar_travado (encerrada oficialmente
+  // ou fechada por W.O.) nunca pode voltar para LIVE/SCHEDULED por aqui — sem
+  // essa checagem, religar o toggle "Ao Vivo" reabria uma partida já encerrada.
+  const { data: atual, error: fetchError } = await sb
+    .from('partidas')
+    .select('placar_travado')
+    .eq('id', matchId)
+    .single();
+  if (fetchError) throw fetchError;
+  if (atual?.placar_travado) {
+    throw new Error('Esta partida já foi encerrada e o placar está travado — não é possível reabri-la.');
+  }
+
   const payload = { status: aoVivo ? 'LIVE' : 'SCHEDULED' };
   const { error } = await sb.from('partidas').update(payload).eq('id', matchId);
   if (error) throw error;
@@ -608,10 +781,22 @@ async function fetchAssistencias(categoria, limite = 10) {
 // ---------------------------------------------------------------------
 // DATA EM LOTE PARA TODA A RODADA
 // ---------------------------------------------------------------------
-async function bulkSetRoundDate(categoria, rodada, data) {
+// ---------------------------------------------------------------------
+// DATA/LOCAL EM LOTE PARA TODA A RODADA
+// ---------------------------------------------------------------------
+// Aplica data, hora e/ou local de uma vez só pra rodada inteira — pensado
+// pra tornar o cadastro bem mais rápido quando todos os jogos da rodada
+// são no mesmo lugar/dia (qualquer campo omitido não é alterado).
+async function bulkSetRoundInfo(categoria, rodada, { data, hora, local } = {}) {
+  const payload = {};
+  if (data !== undefined) payload.data = data || null;
+  if (hora !== undefined) payload.hora = hora || null;
+  if (local !== undefined && local !== '') payload.local = local;
+  if (Object.keys(payload).length === 0) return;
+
   const { error } = await sb
     .from('partidas')
-    .update({ data: data || null })
+    .update(payload)
     .eq('categoria', categoria)
     .eq('rodada', rodada)
     .eq('is_bye', false);

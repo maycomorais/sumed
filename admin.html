@@ -36,15 +36,55 @@
       <p class="section-label">Sorteio & Rodadas</p>
       <p class="section-sub">Geração automática do calendário — todos contra todos.</p>
 
-      <div class="card card-accent">
-        <div class="card-title">Gerador Automático (Round-Robin)</div>
+      <div class="card card-accent" id="card-restricoes-sorteio">
+        <div class="card-title">🎯 Pré-Sorteio — Regras Especiais</div>
         <p style="color:var(--text-muted); font-size:0.85rem; margin-bottom:15px;">
-          Gera as 13 rodadas com folga automática, sem repetir a equipe que folga. Afeta somente a categoria selecionada acima.
+          Configure antes de sortear. Essas regras têm prioridade sobre o sorteio aleatório — o sistema tenta várias combinações até encontrar uma que respeite todas elas. Só o AdminMaster vê e edita esta seção; ao salvar, quem for iniciar o sorteio (inclusive o Presidente) já usa essas regras automaticamente.
         </p>
-        <button class="btn-action" id="btn-gerar-sorteio" onclick="generateDraw()" style="width:100%;">🎲 Gerar Novo Sorteio</button>
+
+        <div class="form-group">
+          <label>Equipe com folga obrigatória na Rodada 1</label>
+          <select id="folga-rodada1-select" class="form-control">
+            <option value="">— Automático (sem preferência) —</option>
+          </select>
+          <p style="font-size:0.72rem; color:var(--text-muted); margin-top:4px;">Só tem efeito se o número de equipes for ímpar (senão não existe folga na Rodada 1).</p>
+        </div>
+
+        <div class="form-group">
+          <label>Pares que NÃO podem se enfrentar antes da Rodada 3</label>
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
+            <select id="par-restrito-a" class="form-control"></select>
+            <select id="par-restrito-b" class="form-control"></select>
+          </div>
+          <button type="button" class="btn-secondary" style="width:100%; margin-top:8px;" onclick="addParRestritoUI()">+ Adicionar par restrito</button>
+          <div id="lista-pares-restritos" style="margin-top:10px;"></div>
+        </div>
+
+        <button type="button" class="btn-action" id="btn-salvar-pre-sorteio" style="width:100%; margin-top:14px;" onclick="salvarConfigSorteioUI()">💾 Salvar Configuração</button>
+      </div>
+
+      <div class="card card-accent">
+        <div class="card-title">🎬 Sorteio Ao Vivo</div>
+        <p style="color:var(--text-muted); font-size:0.85rem; margin-bottom:15px;">
+          Abre uma tela cheia, ideal pra projetar — sorteia um time por vez, no seu ritmo (você controla quando revelar cada um). Ao final, um botão libera a geração automática do restante das rodadas.
+        </p>
+        <button class="btn-action" id="btn-gerar-sorteio" onclick="iniciarSorteioAoVivo()" style="width:100%;">🎲 Iniciar Sorteio Ao Vivo</button>
         <p id="sorteio-restrito-msg" style="display:none; color:var(--text-muted); font-size:0.8rem; margin-top:10px;">
           Apenas AdminMaster ou Presidente podem gerar um novo sorteio.
         </p>
+
+        <details style="margin-top:14px;">
+          <summary style="color:var(--text-muted); font-size:0.8rem; cursor:pointer;">Modo rápido (sem animação, sem regras especiais)</summary>
+          <button class="btn-secondary" style="width:100%; margin-top:10px;" onclick="generateDraw()">Gerar sorteio instantâneo (substitui tudo)</button>
+        </details>
+      </div>
+
+      <div class="card" style="border-color: var(--danger-strong);">
+        <div class="card-title" style="color: var(--danger-strong);">⚠️ Zona de Perigo</div>
+        <p style="color:var(--text-muted); font-size:0.85rem; margin-bottom:12px;">
+          Apaga TODAS as rodadas, placares e súmulas já lançados da categoria selecionada — sem gerar um novo sorteio no lugar. Use antes de sortear de novo do zero, ou pra corrigir uma configuração errada sem precisar mexer no banco de dados diretamente.
+        </p>
+        <button class="btn-secondary" style="width:100%; border-color:var(--danger-strong); color:var(--danger-strong);" onclick="zerarSorteioUI()">🗑️ Zerar sorteio desta categoria</button>
       </div>
 
       <div class="card">
@@ -68,11 +108,12 @@
       </div>
 
       <div class="card" style="padding:12px;">
-        <p style="font-size:0.78rem; color:var(--text-muted); margin-bottom:8px;">Aplicar a mesma data a todos os jogos desta rodada:</p>
-        <div style="display:flex; gap:8px;">
-          <input type="date" id="bulk-round-date" class="form-control" style="flex:1;">
-          <button class="btn-secondary" onclick="aplicarDataRodadaUI()">Aplicar</button>
+        <p style="font-size:0.78rem; color:var(--text-muted); margin-bottom:8px;">Aplicar a mesma data/local a todos os jogos desta rodada de uma vez:</p>
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
+          <input type="date" id="bulk-round-date" class="form-control">
+          <input type="text" id="bulk-round-local" class="form-control" placeholder="Local (opcional)">
         </div>
+        <button class="btn-secondary" style="width:100%; margin-top:8px;" onclick="aplicarDataRodadaUI()">Aplicar a toda a Rodada</button>
       </div>
 
       <div id="admin-matches-list"></div>
@@ -402,6 +443,7 @@
         <label style="display:flex; align-items:center; gap:8px; font-size:0.85rem; margin-bottom:12px;">
           <input type="checkbox" id="chk-ao-vivo" onchange="toggleAoVivoUI(this.checked)"> Esta partida está rolando agora
         </label>
+        <p id="ao-vivo-travada-msg" style="display:none; color:var(--gold); font-size:0.78rem; margin-top:-6px; margin-bottom:12px;">🔒 Partida encerrada — placar travado, não é possível voltar a "Ao Vivo".</p>
         <div id="wrap-placar-ao-vivo" style="display:none; margin-bottom:12px;">
           <div style="display:flex; align-items:center; justify-content:space-around; gap:10px;">
             <div style="text-align:center;">
@@ -482,6 +524,35 @@
       <span class="icon">⋯</span><span>Mais</span>
     </button>
   </nav>
+
+  <!-- OVERLAY: SORTEIO AO VIVO (tela cheia — pensada pra ser projetada/acompanhada por um público) -->
+  <div id="sorteio-overlay" class="sorteio-overlay" style="display:none;">
+    <button class="sorteio-overlay-close" onclick="fecharSorteioOverlayUI()" title="Fechar">✕</button>
+
+    <div class="sorteio-overlay-header">🏆 SUMED 2026 — Sorteio da Rodada 1</div>
+
+    <div class="sorteio-overlay-body">
+      <div id="sorteio-overlay-etapa" class="sorteio-overlay-etapa">Jogo 1 · Time 1</div>
+
+      <div class="sorteio-roleta-wrap">
+        <div id="sorteio-roleta-shield" class="sorteio-roleta-shield">
+          <span class="sorteio-shield-placeholder">?</span>
+        </div>
+      </div>
+      <div id="sorteio-roleta-nome" class="sorteio-roleta-nome">&nbsp;</div>
+
+      <button class="btn-action sorteio-btn-sortear" id="btn-sortear-proximo" onclick="sortearProximoUI()">🎲 Sortear</button>
+      <button class="btn-secondary sorteio-btn-pular" id="btn-pular-animacao" onclick="pularAnimacaoSorteioUI()">⏭️ Pular animação</button>
+
+      <div id="sorteio-folga-reveal" class="sorteio-folga-reveal" style="display:none;"></div>
+
+      <button class="btn-action" id="btn-gerar-restante" style="display:none;" onclick="gerarRestanteRodadasUI()">✅ Gerar Rodadas 2 a 13 automaticamente</button>
+    </div>
+
+    <div class="sorteio-overlay-progresso">
+      <div id="sorteio-progresso-lista" class="sorteio-progresso-lista"></div>
+    </div>
+  </div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="supabaseClient.js"></script>

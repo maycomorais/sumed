@@ -83,7 +83,7 @@ function switchAdminScreen(screenId) {
   document.querySelector(`.bottom-nav-item[data-screen="${ADMIN_NAV_MAP[screenId]}"]`)?.classList.add('active');
 
   if (screenId === 'placar') loadAdminRound();
-  if (screenId === 'sorteio') loadCalendarioCompleto();
+  if (screenId === 'sorteio') { loadCalendarioCompleto(); renderRestricoesPainel(); }
   if (screenId === 'equipes') renderAdminTeamsList();
   if (screenId === 'patrocinadores') renderAdminSponsorsList();
   if (screenId === 'usuarios') renderAdminUsersList();
@@ -110,6 +110,11 @@ async function setAdminCategoria(categoria) {
   if (adminCategoria === categoria) return;
   adminCategoria = categoria;
   adminRound = 1;
+  // Pares restritos e sorteio pré-calculado são específicos da categoria
+  // anterior (guardam IDs de equipes daquela categoria) — descarta ao trocar.
+  paresRestritosSorteio = [];
+  sorteioPreCalculado = null;
+  resetSorteioAoVivoUI();
   renderAdminCategoriaToggle();
   teams = await fetchTeams(adminCategoria);
   renderAdminTeamsSummary();
@@ -118,7 +123,7 @@ async function setAdminCategoria(categoria) {
 
   const activeScreen = document.querySelector('.screen.active')?.id?.replace('screen-', '');
   if (activeScreen === 'placar') loadAdminRound();
-  if (activeScreen === 'sorteio') loadCalendarioCompleto();
+  if (activeScreen === 'sorteio') { loadCalendarioCompleto(); renderRestricoesPainel(); }
   if (activeScreen === 'disciplina') initDisciplinaTab();
 }
 
@@ -151,10 +156,16 @@ async function initAdmin() {
   document.getElementById('user-badge').innerText =
     `${currentUser.profile.nome} · ${ROLE_LABELS[currentUser.profile.role]}`;
 
-  // Gerar Sorteio: só AdminMaster/Presidente
-  const podeGerarSorteio = [ROLES.ADMIN_MASTER, ROLES.PRESIDENTE].includes(currentUser.profile.role);
-  document.getElementById('btn-gerar-sorteio').style.display = podeGerarSorteio ? 'block' : 'none';
-  document.getElementById('sorteio-restrito-msg').style.display = podeGerarSorteio ? 'none' : 'block';
+  // Iniciar/zerar sorteio: AdminMaster e Presidente
+  const podeIniciarSorteio = [ROLES.ADMIN_MASTER, ROLES.PRESIDENTE].includes(currentUser.profile.role);
+  document.getElementById('btn-gerar-sorteio').style.display = podeIniciarSorteio ? 'block' : 'none';
+  document.getElementById('sorteio-restrito-msg').style.display = podeIniciarSorteio ? 'none' : 'block';
+
+  // Pré-Sorteio (folga forçada + pares restritos): só o AdminMaster vê e edita.
+  // O Presidente nem enxerga esse card — ele só aperta "Iniciar Sorteio",
+  // e as regras configuradas aqui são aplicadas automaticamente por trás.
+  const podeEditarPreSorteio = currentUser.profile.role === ROLES.ADMIN_MASTER;
+  document.getElementById('card-restricoes-sorteio').style.display = podeEditarPreSorteio ? 'block' : 'none';
 
   // Criar/excluir equipes: só AdminMaster/Presidente (Diretor edita, não cria)
   const podeCriarEquipe = [ROLES.ADMIN_MASTER, ROLES.PRESIDENTE].includes(currentUser.profile.role);
@@ -233,8 +244,8 @@ async function loadCalendarioCompleto() {
 }
 
 async function generateDraw() {
-  const podeGerarSorteio = [ROLES.ADMIN_MASTER, ROLES.PRESIDENTE].includes(currentUser.profile.role);
-  if (!podeGerarSorteio) {
+  const podeIniciarSorteio = [ROLES.ADMIN_MASTER, ROLES.PRESIDENTE].includes(currentUser.profile.role);
+  if (!podeIniciarSorteio) {
     alert('Apenas AdminMaster ou Presidente podem gerar um novo sorteio.');
     return;
   }
@@ -252,6 +263,441 @@ async function generateDraw() {
     alert('Erro ao gerar sorteio: ' + e.message);
   }
 }
+
+// Apaga todo o calendário da categoria (rodadas, placares, súmulas) sem
+// gerar um novo sorteio no lugar. Ação destrutiva e irreversível — exige
+// digitar "ZERAR" pra confirmar, igual ao padrão usado em excluir equipe.
+async function zerarSorteioUI() {
+  const podeIniciarSorteio = [ROLES.ADMIN_MASTER, ROLES.PRESIDENTE].includes(currentUser.profile.role);
+  if (!podeIniciarSorteio) {
+    alert('Apenas AdminMaster ou Presidente podem zerar o sorteio.');
+    return;
+  }
+
+  const nomeCategoria = adminCategoria === 'masculino' ? 'Masculino' : 'Feminino';
+  const confirmacao = prompt(
+    `⚠️ Isso vai apagar PERMANENTEMENTE todas as rodadas, placares e súmulas já lançados da categoria ${nomeCategoria}. Nenhum novo sorteio será gerado no lugar — o calendário ficará vazio até você sortear de novo.\n\n`
+    + `Essa ação não pode ser desfeita.\n\n`
+    + `Para confirmar, digite ZERAR abaixo:`
+  );
+  if (confirmacao === null) return;
+  if (confirmacao.trim().toUpperCase() !== 'ZERAR') {
+    alert('Confirmação não confere. Nada foi apagado.');
+    return;
+  }
+
+  try {
+    await zerarSorteio(adminCategoria);
+    alert(`Calendário da categoria ${nomeCategoria} foi zerado.`);
+
+    // Limpa qualquer estado local que dependa do calendário anterior.
+    matches = [];
+    adminRound = 1;
+    resetSorteioAoVivoUI();
+
+    await loadCalendarioCompleto();
+    const activeScreen = document.querySelector('.screen.active')?.id?.replace('screen-', '');
+    if (activeScreen === 'placar') await loadAdminRound();
+  } catch (e) {
+    alert('Erro ao zerar sorteio: ' + e.message);
+  }
+}
+
+// ---------------------------------------------------------------------
+// PRÉ-SORTEIO — RESTRIÇÕES (folga forçada na R1 + pares que não podem se
+// encontrar antes da Rodada 3). Persistido no banco (tabela sorteio_config)
+// porque quem CONFIGURA isso (AdminMaster) e quem EXECUTA o sorteio ao vivo
+// (Presidente) podem estar em sessões diferentes — o Presidente nem vê esse
+// card, mas as regras salvas aqui são aplicadas automaticamente pra ele.
+// ---------------------------------------------------------------------
+let paresRestritosSorteio = []; // [{ aId, bId }] — espelha o que está salvo
+let configSorteioAtual = { folgaRodada1Id: null, paresRestritos: [] };
+
+async function renderRestricoesPainel() {
+  const folgaSelect = document.getElementById('folga-rodada1-select');
+  const parA = document.getElementById('par-restrito-a');
+  const parB = document.getElementById('par-restrito-b');
+  if (!folgaSelect || !parA || !parB) return; // card nem existe pra esse role (Presidente/Diretor)
+
+  try {
+    configSorteioAtual = await carregarConfigSorteio(adminCategoria);
+  } catch (e) {
+    console.error('Erro ao carregar configuração do pré-sorteio:', e);
+    configSorteioAtual = { folgaRodada1Id: null, paresRestritos: [] };
+  }
+  paresRestritosSorteio = (configSorteioAtual.paresRestritos || []).map(([aId, bId]) => ({ aId, bId }));
+
+  const options = teams.map(t => `<option value="${t.id}">${t.nome}</option>`).join('');
+  folgaSelect.innerHTML = '<option value="">— Automático (sem preferência) —</option>' + options;
+  folgaSelect.value = configSorteioAtual.folgaRodada1Id || '';
+  parA.innerHTML = options;
+  parB.innerHTML = options;
+
+  renderListaParesRestritos();
+}
+
+function renderListaParesRestritos() {
+  const el = document.getElementById('lista-pares-restritos');
+  if (!el) return;
+  el.innerHTML = paresRestritosSorteio.length
+    ? paresRestritosSorteio.map((p, i) => {
+        const nomeA = teams.find(t => t.id === p.aId)?.nome || '?';
+        const nomeB = teams.find(t => t.id === p.bId)?.nome || '?';
+        return `
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; padding:6px 0; border-top:1px solid var(--border-soft); font-size:0.82rem;">
+            <span>🚫 ${nomeA} × ${nomeB} <span style="color:var(--text-muted);">(até Rodada 2)</span></span>
+            <button class="btn-remove" onclick="removeParRestritoUI(${i})">✕</button>
+          </div>
+        `;
+      }).join('')
+    : '<p style="color:var(--text-muted); font-size:0.78rem;">Nenhum par restrito adicionado.</p>';
+}
+
+function addParRestritoUI() {
+  if (currentUser.profile.role !== ROLES.ADMIN_MASTER) return; // defesa extra, além do card escondido
+  const aId = document.getElementById('par-restrito-a').value;
+  const bId = document.getElementById('par-restrito-b').value;
+  if (!aId || !bId) { alert('Selecione as duas equipes.'); return; }
+  if (aId === bId) { alert('Escolha duas equipes diferentes.'); return; }
+  const jaExiste = paresRestritosSorteio.some(p => (p.aId === aId && p.bId === bId) || (p.aId === bId && p.bId === aId));
+  if (jaExiste) { alert('Esse par já foi adicionado.'); return; }
+
+  paresRestritosSorteio.push({ aId, bId });
+  renderListaParesRestritos();
+}
+
+function removeParRestritoUI(index) {
+  if (currentUser.profile.role !== ROLES.ADMIN_MASTER) return;
+  paresRestritosSorteio.splice(index, 1);
+  renderListaParesRestritos();
+}
+
+// Grava no banco o que está montado na tela (folga + pares). Só depois
+// disso o Presidente (em outra sessão) passa a enxergar essas regras.
+async function salvarConfigSorteioUI() {
+  if (currentUser.profile.role !== ROLES.ADMIN_MASTER) {
+    alert('Apenas o AdminMaster pode editar o pré-sorteio.');
+    return;
+  }
+  const folgaRodada1Id = document.getElementById('folga-rodada1-select').value || null;
+  const paresRestritos = paresRestritosSorteio.map(p => [p.aId, p.bId]);
+
+  const btn = document.getElementById('btn-salvar-pre-sorteio');
+  if (btn) { btn.disabled = true; btn.textContent = 'Salvando...'; }
+
+  try {
+    await salvarConfigSorteio(adminCategoria, { folgaRodada1Id, paresRestritos });
+    configSorteioAtual = { folgaRodada1Id, paresRestritos };
+    alert('Configuração do pré-sorteio salva! O Presidente já pode iniciar o sorteio com essas regras.');
+  } catch (e) {
+    alert('Erro ao salvar configuração: ' + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '💾 Salvar Configuração'; }
+  }
+}
+
+// ---------------------------------------------------------------------
+// SORTEIO AO VIVO — tela cheia, um time por vez, no ritmo de quem está
+// controlando (pensado pra ser projetado/acompanhado por um público).
+// ---------------------------------------------------------------------
+let sorteioPreCalculado = null;   // calendário completo já validado, aguardando gravação
+let sorteioPassos = [];           // [{ gameIndex, slot: 'a'|'b', teamId }] — um passo por revelação
+let sorteioPassoAtual = 0;
+let sorteioPoolAtual = [];        // equipes desta rodada ainda não sorteadas
+let sorteioByeTeamId = null;      // guardado, só é revelado no final
+let sorteioAnimacaoAtiva = false;
+let sorteioPularSolicitado = false;
+
+function resetSorteioAoVivoUI() {
+  sorteioAnimacaoAtiva = false;
+  sorteioPularSolicitado = false;
+  sorteioPassos = [];
+  sorteioPassoAtual = 0;
+  sorteioPoolAtual = [];
+  sorteioByeTeamId = null;
+  const overlay = document.getElementById('sorteio-overlay');
+  if (overlay) overlay.style.display = 'none';
+  const btnGerar = document.getElementById('btn-gerar-sorteio');
+  if (btnGerar) { btnGerar.disabled = false; btnGerar.textContent = '🎲 Iniciar Sorteio Ao Vivo'; }
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function iniciarSorteioAoVivo() {
+  const podeIniciarSorteio = [ROLES.ADMIN_MASTER, ROLES.PRESIDENTE].includes(currentUser.profile.role);
+  if (!podeIniciarSorteio) {
+    alert('Apenas AdminMaster ou Presidente podem gerar um novo sorteio.');
+    return;
+  }
+  if (teams.length < 2) {
+    alert('Cadastre ao menos 2 equipes antes de gerar o sorteio.');
+    return;
+  }
+  if (!confirm(`Isso vai preparar um novo calendário para a categoria ${adminCategoria === 'masculino' ? 'Masculino' : 'Feminino'}. Nada é salvo ainda — só depois que você confirmar a geração do restante das rodadas. Continuar?`)) return;
+
+  // Busca a configuração mais recente do pré-sorteio — importante pro
+  // Presidente, que não edita essa tela e pode estar com a sessão aberta
+  // há um tempo, enquanto o AdminMaster ajustava as regras agora há pouco.
+  try {
+    configSorteioAtual = await carregarConfigSorteio(adminCategoria);
+  } catch (e) {
+    console.error('Erro ao carregar configuração do pré-sorteio, seguindo sem restrições:', e);
+    configSorteioAtual = { folgaRodada1Id: null, paresRestritos: [] };
+  }
+
+  let schedule;
+  try {
+    schedule = gerarCalendarioComRestricoes(teams.map(t => t.id), adminCategoria, {
+      folgaRodada1Id: configSorteioAtual.folgaRodada1Id || undefined,
+      paresRestritos: configSorteioAtual.paresRestritos || [],
+    });
+  } catch (e) {
+    alert('Erro ao calcular o sorteio: ' + e.message);
+    return;
+  }
+
+  sorteioPreCalculado = schedule;
+
+  const round1Games = schedule.filter(m => m.rodada === 1 && !m.is_bye);
+  const byeMatch = schedule.find(m => m.rodada === 1 && m.is_bye);
+  sorteioByeTeamId = byeMatch ? byeMatch.equipe_a : null;
+
+  // Monta a fila de passos: time A e time B de cada jogo, na ordem.
+  sorteioPassos = [];
+  round1Games.forEach((jogo, gameIndex) => {
+    sorteioPassos.push({ gameIndex, slot: 'a', teamId: jogo.equipe_a });
+    sorteioPassos.push({ gameIndex, slot: 'b', teamId: jogo.equipe_b });
+  });
+  sorteioPassoAtual = 0;
+  sorteioPoolAtual = teams.map(t => t.id).filter(id => id !== sorteioByeTeamId);
+  sorteioPularSolicitado = false;
+
+  const btnGerar = document.getElementById('btn-gerar-sorteio');
+  btnGerar.disabled = true;
+  btnGerar.textContent = 'Sorteio em andamento...';
+
+  abrirSorteioOverlay();
+  document.getElementById('sorteio-progresso-lista').innerHTML = '';
+  document.getElementById('btn-sortear-proximo').style.display = 'block';
+  document.getElementById('btn-sortear-proximo').disabled = false;
+  document.getElementById('btn-pular-animacao').style.display = 'block';
+  document.getElementById('btn-gerar-restante').style.display = 'none';
+  document.getElementById('sorteio-folga-reveal').style.display = 'none';
+
+  prepararProximaEtapaUI();
+}
+
+function abrirSorteioOverlay() {
+  document.getElementById('sorteio-overlay').style.display = 'flex';
+}
+
+function fecharSorteioOverlayUI() {
+  if (sorteioAnimacaoAtiva) {
+    alert('Aguarde o sorteio atual terminar (ou clique em "Pular animação") antes de fechar.');
+    return;
+  }
+  const emAndamento = sorteioPreCalculado && sorteioPassoAtual < sorteioPassos.length;
+  if (emAndamento && !confirm('O sorteio ainda não terminou. Se fechar agora, nada é salvo e você vai precisar recomeçar do zero. Deseja realmente fechar?')) {
+    return;
+  }
+  document.getElementById('sorteio-overlay').style.display = 'none';
+  if (emAndamento) resetSorteioAoVivoUI();
+}
+
+// Prepara a tela pro PRÓXIMO passo (mostra "Jogo N · Time X" e o escudo em
+// branco), sem ainda sortear nada — só quando o usuário aperta "Sortear" é
+// que a animação roda de verdade.
+function prepararProximaEtapaUI() {
+  const passo = sorteioPassos[sorteioPassoAtual];
+  if (!passo) return;
+  const jogoNum = passo.gameIndex + 1;
+  const slotLabel = passo.slot === 'a' ? 'Time 1 (Mandante)' : 'Time 2 (Visitante)';
+  document.getElementById('sorteio-overlay-etapa').innerText = `Jogo ${jogoNum} de ${sorteioPassos.length / 2} · ${slotLabel}`;
+
+  const shield = document.getElementById('sorteio-roleta-shield');
+  shield.className = 'sorteio-roleta-shield';
+  shield.innerHTML = '<span class="sorteio-shield-placeholder">?</span>';
+  document.getElementById('sorteio-roleta-nome').innerText = '';
+}
+
+function adicionarItemProgresso(gameIndex) {
+  const jogo = sorteioPassos.filter(p => p.gameIndex === gameIndex);
+  const nomeA = teams.find(t => t.id === jogo[0].teamId)?.nome || '?';
+  const nomeB = teams.find(t => t.id === jogo[1].teamId)?.nome || '?';
+  const item = document.createElement('div');
+  item.className = 'sorteio-progresso-item';
+  item.textContent = `Jogo ${gameIndex + 1}: ${nomeA} × ${nomeB}`;
+  document.getElementById('sorteio-progresso-lista').prepend(item);
+}
+
+// Aciona a revelação do passo atual (um time por clique). Ao terminar,
+// avança pro próximo passo — ou, se era o último, revela a folga e libera
+// "Gerar Restante".
+async function sortearProximoUI() {
+  if (sorteioAnimacaoAtiva || sorteioPassoAtual >= sorteioPassos.length) return;
+
+  sorteioAnimacaoAtiva = true;
+  sorteioPularSolicitado = false;
+  document.getElementById('btn-sortear-proximo').disabled = true;
+
+  const passo = sorteioPassos[sorteioPassoAtual];
+  await animarRoleta(passo.teamId, sorteioPoolAtual);
+  sorteioPoolAtual = sorteioPoolAtual.filter(id => id !== passo.teamId);
+  if (passo.slot === 'b') adicionarItemProgresso(passo.gameIndex);
+
+  sorteioPassoAtual++;
+  await sleep(1400); // deixa o resultado visível um instante antes de seguir
+
+  if (sorteioPassoAtual >= sorteioPassos.length) {
+    document.getElementById('btn-sortear-proximo').style.display = 'none';
+    document.getElementById('btn-pular-animacao').style.display = 'none';
+    await revelarFolgaFinal();
+    document.getElementById('btn-gerar-restante').style.display = 'block';
+  } else {
+    prepararProximaEtapaUI();
+    document.getElementById('btn-sortear-proximo').disabled = false;
+  }
+
+  sorteioAnimacaoAtiva = false;
+}
+
+function pularAnimacaoSorteioUI() {
+  sorteioPularSolicitado = true;
+}
+
+// A equipe de folga é conhecida de antemão (regra fixa configurada no
+// pré-sorteio, não é sorteada), mas só é anunciada aqui no final — depois
+// de todos os 6 jogos definidos — pra não estragar o suspense antes da hora.
+async function revelarFolgaFinal() {
+  const etapa = document.getElementById('sorteio-overlay-etapa');
+  const reveal = document.getElementById('sorteio-folga-reveal');
+
+  if (!sorteioByeTeamId) {
+    etapa.innerText = '✅ Sorteio da Rodada 1 concluído!';
+    reveal.style.display = 'none';
+    return;
+  }
+
+  etapa.innerText = 'E a equipe que folga na Rodada 1 é...';
+  await sleep(900); // um respiro antes de revelar, mantém a tensão
+
+  const t = teams.find(x => x.id === sorteioByeTeamId);
+  reveal.style.display = 'block';
+  reveal.innerHTML = `
+    <div class="sorteio-folga-shield">${t?.escudo_url ? `<img src="${t.escudo_url}">` : '⏸️'}</div>
+    <p class="sorteio-folga-nome">${t?.nome || '?'}</p>
+    <p class="sorteio-folga-legenda">folga na Rodada 1</p>
+  `;
+}
+
+// Efeito "roleta de prêmio": gira rápido, desacelera, quase para num time
+// (tensão), acelera de novo de surpresa, e só então desacelera de vez até
+// travar no resultado real. Se "pular animação" for clicado, encerra na hora.
+function animarRoleta(resultadoTeamId, pool) {
+  return new Promise(resolve => {
+    const shield = document.getElementById('sorteio-roleta-shield');
+    const nomeEl = document.getElementById('sorteio-roleta-nome');
+    const candidatos = pool.length ? pool : [resultadoTeamId];
+
+    const renderCandidato = (teamId) => {
+      const t = teams.find(x => x.id === teamId);
+      shield.innerHTML = t?.escudo_url
+        ? `<img src="${t.escudo_url}">`
+        : `<span class="sorteio-shield-placeholder">🛡️</span>`;
+    };
+
+    const finalizar = () => {
+      renderCandidato(resultadoTeamId);
+      shield.className = 'sorteio-roleta-shield sorteio-revelado';
+      const t = teams.find(x => x.id === resultadoTeamId);
+      nomeEl.innerText = t?.nome || '?';
+      resolve();
+    };
+
+    if (sorteioPularSolicitado) { finalizar(); return; }
+
+    shield.className = 'sorteio-roleta-shield sorteio-girando';
+    nomeEl.innerText = '';
+
+    // Fases: gira rápido -> desacelera -> "quase para" num decoy (tensão) ->
+    // acelera de novo (surpresa, ainda não acabou) -> desacelera de vez até
+    // o resultado verdadeiro (fixado só no finalizar(), nunca antes).
+    const FASES = [
+      { tipo: 'girar', duracao: 2500, intervaloIni: 70, intervaloFim: 70 },
+      { tipo: 'girar', duracao: 1800, intervaloIni: 70, intervaloFim: 380 },
+      { tipo: 'pausa', duracao: 800 },
+      { tipo: 'girar', duracao: 1000, intervaloIni: 90, intervaloFim: 90 },
+      { tipo: 'girar', duracao: 2400, intervaloIni: 90, intervaloFim: 700 },
+    ];
+
+    let faseIdx = 0;
+    let tempoNaFase = 0;
+
+    function avancarFase() {
+      faseIdx++;
+      tempoNaFase = 0;
+      if (faseIdx >= FASES.length) { finalizar(); return; }
+      proximoFrame();
+    }
+
+    function proximoFrame() {
+      if (sorteioPularSolicitado) { finalizar(); return; }
+
+      const fase = FASES[faseIdx];
+
+      if (fase.tipo === 'pausa') {
+        // "Quase parou" — segura num candidato aleatório por um instante,
+        // com destaque visual de tensão, antes de decidir se vai mesmo parar aqui.
+        shield.classList.add('sorteio-tensao');
+        renderCandidato(candidatos[Math.floor(Math.random() * candidatos.length)]);
+        setTimeout(avancarFase, fase.duracao);
+        return;
+      }
+
+      shield.classList.remove('sorteio-tensao');
+      renderCandidato(candidatos[Math.floor(Math.random() * candidatos.length)]);
+
+      const progresso = Math.min(tempoNaFase / fase.duracao, 1);
+      const intervalo = fase.intervaloIni + (fase.intervaloFim - fase.intervaloIni) * Math.pow(progresso, 2);
+      tempoNaFase += intervalo;
+
+      if (tempoNaFase >= fase.duracao) {
+        setTimeout(avancarFase, intervalo);
+      } else {
+        setTimeout(proximoFrame, intervalo);
+      }
+    }
+
+    proximoFrame();
+  });
+}
+
+async function gerarRestanteRodadasUI() {
+  if (!sorteioPreCalculado) {
+    alert('Nenhum sorteio calculado ainda. Inicie o sorteio ao vivo primeiro.');
+    return;
+  }
+  if (!confirm(`Confirma a geração das 13 rodadas para a categoria ${adminCategoria === 'masculino' ? 'Masculino' : 'Feminino'}? Isso substitui qualquer calendário existente dessa categoria.`)) return;
+
+  const btn = document.getElementById('btn-gerar-restante');
+  btn.disabled = true;
+  btn.textContent = 'Gerando...';
+
+  try {
+    await salvarCalendario(adminCategoria, sorteioPreCalculado);
+    alert('Calendário completo gerado com sucesso!');
+    sorteioPreCalculado = null;
+    resetSorteioAoVivoUI();
+    loadCalendarioCompleto();
+  } catch (e) {
+    alert('Erro ao gravar o calendário: ' + e.message);
+    btn.disabled = false;
+    btn.textContent = '✅ Gerar Rodadas 2 a 13 automaticamente';
+  }
+}
+
 
 // ---------------------------------------------------------------------
 // PLACAR (resultado + data/hora/local unificados por partida)
@@ -357,6 +803,15 @@ function renderAdminRound() {
           <button class="btn-action" style="flex:1;" onclick="saveMatchUI('${m.id}')">Salvar</button>
           <button class="btn-secondary" onclick="openSumulaAdmin('${m.id}')">📋 Súmula</button>
         </div>
+        <details style="margin-top:8px;">
+          <summary style="color:var(--text-muted); font-size:0.78rem; cursor:pointer;">🔁 Transferir para outra rodada</summary>
+          <div style="display:flex; gap:8px; margin-top:8px; align-items:center;">
+            <span style="font-size:0.78rem; color:var(--text-muted); white-space:nowrap;">Nova rodada:</span>
+            <input type="number" id="rodada_${m.id}" min="1" value="${m.rodada}" class="form-control" style="width:64px;">
+            <button class="btn-secondary" style="flex:1;" onclick="transferirPartidaUI('${m.id}')">Transferir</button>
+          </div>
+          <p style="font-size:0.7rem; color:var(--text-muted); margin-top:6px;">Move só esta partida — útil em caso de adiamento (chuva, campo indisponível etc.). O restante da rodada não é afetado.</p>
+        </details>
         ${!travado ? `<button class="btn-secondary" style="width:100%; margin-top:8px; border-color:var(--danger-strong); color:var(--danger-strong);" onclick="encerrarPartidaUI('${m.id}')">🔒 Encerrar Partida (trava o placar)</button>` : ''}
         ${!travado ? `
           <details style="margin-top:8px;">
@@ -372,6 +827,31 @@ function renderAdminRound() {
   }).join('');
 }
 
+async function transferirPartidaUI(matchId) {
+  const novaRodada = document.getElementById(`rodada_${matchId}`).value;
+  const m = matches.find(x => x.id === matchId);
+  if (!m) return;
+  if (Number(novaRodada) === Number(m.rodada)) {
+    alert('Essa partida já está nessa rodada.');
+    return;
+  }
+  if (!confirm(`Transferir esta partida da Rodada ${m.rodada} para a Rodada ${novaRodada}?`)) return;
+
+  // Reaproveita os campos de data/hora/local já preenchidos no card, caso o
+  // admin já tenha ajustado a nova data junto com a transferência.
+  const data = document.getElementById(`date_${matchId}`).value;
+  const hora = document.getElementById(`time_${matchId}`).value;
+  const local = document.getElementById(`local_${matchId}`).value;
+
+  try {
+    await transferirPartidaDeRodada(matchId, novaRodada, { data, hora, local });
+    alert('Partida transferida!');
+    await loadAdminRound();
+  } catch (e) {
+    alert('Erro ao transferir: ' + e.message);
+  }
+}
+
 async function encerrarPartidaUI(matchId) {
   if (!confirm('Encerrar esta partida? O placar não poderá mais ser alterado depois disso. Cartões, gols e assistências continuam editáveis.')) return;
   try {
@@ -384,10 +864,11 @@ async function encerrarPartidaUI(matchId) {
 
 async function aplicarDataRodadaUI() {
   const data = document.getElementById('bulk-round-date').value;
-  if (!data) { alert('Escolha uma data.'); return; }
+  const local = document.getElementById('bulk-round-local').value.trim();
+  if (!data && !local) { alert('Preencha ao menos a data ou o local para aplicar.'); return; }
   try {
-    await bulkSetRoundDate(adminCategoria, adminRound, data);
-    alert(`Data aplicada a todos os jogos da Rodada ${adminRound}!`);
+    await bulkSetRoundInfo(adminCategoria, adminRound, { data: data || undefined, local: local || undefined });
+    alert(`Dados aplicados a todos os jogos da Rodada ${adminRound}!`);
     await loadAdminRound();
   } catch (e) {
     alert('Erro: ' + e.message);
@@ -471,7 +952,7 @@ function addJogadorRow() {
       <input type="file" accept="image/*" class="form-control" onchange="handleJogadorFoto('${id}', this)">
     </div>
     <label style="display:flex; align-items:center; gap:6px; font-size:0.78rem; color:var(--text-muted); margin-bottom:10px;">
-      <input type="checkbox" onchange="updateJogadorField('${id}','convidado',this.checked)"> 🌟 Atleta convidado (máx. 1 por equipe, conforme regulamento)
+      <input type="checkbox" onchange="updateJogadorField('${id}','convidado',this.checked)"> 👤 Atleta convidado (máx. 1 por equipe, conforme regulamento)
     </label>
     <div class="jogador-card-actions">
       <button type="button" class="btn-remove" onclick="removeJogadorRow('${id}')">✕ Remover esta linha</button>
@@ -631,7 +1112,7 @@ function renderElencoEdicao(t) {
         <input type="file" accept="image/*" class="form-control" onchange="handleElencoFoto('${j.id}', this, 'elprev_${j.id}')">
       </div>
       <label style="display:flex; align-items:center; gap:6px; font-size:0.78rem; color:var(--text-muted); margin-bottom:10px;">
-        <input type="checkbox" id="el_convidado_${j.id}" ${j.convidado ? 'checked' : ''}> 🌟 Atleta convidado
+        <input type="checkbox" id="el_convidado_${j.id}" ${j.convidado ? 'checked' : ''}> 👤 Atleta convidado
       </label>
       <div class="jogador-card-actions">
         <button type="button" class="btn-action" onclick="salvarJogadorExistente('${j.id}')">💾 Salvar Alterações</button>
@@ -656,7 +1137,7 @@ function renderElencoEdicao(t) {
         <input type="file" accept="image/*" class="form-control" onchange="handleElencoFoto('novo', this, 'elprev_novo')">
       </div>
       <label style="display:flex; align-items:center; gap:6px; font-size:0.78rem; color:var(--text-muted); margin-bottom:10px;">
-        <input type="checkbox" id="el_novo_convidado"> 🌟 Atleta convidado
+        <input type="checkbox" id="el_novo_convidado"> 👤 Atleta convidado
       </label>
       <div class="jogador-card-actions">
         <button type="button" class="btn-action" onclick="adicionarNovoJogadorElenco()">✅ Cadastrar este Jogador no Elenco</button>
@@ -776,8 +1257,38 @@ function renderAdminTeamsList() {
         <p style="font-size:0.8rem; color:var(--text-muted);">${(t.jogadores || []).length} jogador(es) cadastrado(s)</p>
       </div>
       <button class="btn-secondary" onclick="editTeam('${t.id}')">Editar</button>
+      ${podeExcluirEquipe() ? `<button class="btn-remove" title="Excluir equipe" onclick="deleteTeamUI('${t.id}', '${(t.nome || '').replace(/'/g, "\\'")}')">✕</button>` : ''}
     </div>
   `).join('') || '<p style="color:var(--text-muted); text-align:center; padding:16px 0;">Nenhuma equipe cadastrada nesta categoria ainda.</p>';
+}
+
+// Excluir equipe: mesma regra de quem pode CRIAR equipe (AdminMaster/Presidente).
+function podeExcluirEquipe() {
+  return !!currentUser && [ROLES.ADMIN_MASTER, ROLES.PRESIDENTE].includes(currentUser.profile.role);
+}
+
+async function deleteTeamUI(teamId, teamName) {
+  const confirmacao = prompt(
+    `⚠️ Isso vai excluir PERMANENTEMENTE a equipe "${teamName}", todo o elenco cadastrado e TODAS as partidas dela no calendário (com placares, gols e cartões já lançados).\n\n`
+    + `Essa ação não pode ser desfeita e pode desorganizar o restante do calendário (rodadas com folga sobrando).\n\n`
+    + `Para confirmar, digite o nome exato da equipe abaixo:`
+  );
+  if (confirmacao === null) return;
+  if (confirmacao.trim() !== teamName) {
+    alert('Nome digitado não confere. Exclusão cancelada por segurança.');
+    return;
+  }
+
+  try {
+    await deleteTeam(teamId);
+    alert(`Equipe "${teamName}" excluída.`);
+    teams = await fetchTeams(adminCategoria);
+    renderAdminTeamsSummary();
+    renderAdminTeamsList();
+    await loadAdminRound();
+  } catch (e) {
+    alert('Erro ao excluir equipe: ' + e.message);
+  }
 }
 
 // ---------------------------------------------------------------------
@@ -1060,7 +1571,10 @@ async function openSumulaAdmin(matchId) {
   document.getElementById('chk-penaltis').checked = !!m.teve_penaltis;
   document.getElementById('wrap-penaltis').style.display = m.teve_penaltis ? 'block' : 'none';
 
+  const travadaSumula = !!m.placar_travado;
   document.getElementById('chk-ao-vivo').checked = m.status === 'LIVE';
+  document.getElementById('chk-ao-vivo').disabled = travadaSumula;
+  document.getElementById('ao-vivo-travada-msg').style.display = travadaSumula ? 'block' : 'none';
   document.getElementById('wrap-placar-ao-vivo').style.display = m.status === 'LIVE' ? 'block' : 'none';
   document.getElementById('live-nome-a').innerText = tA?.nome || '';
   document.getElementById('live-nome-b').innerText = tB?.nome || '';
@@ -1099,12 +1613,20 @@ function populateJogadoresDoSelect(selectEquipeId, selectJogadorId, comOpcaoVazi
 }
 
 async function toggleAoVivoUI(checked) {
+  const mAtual = matches.find(x => x.id === sumulaMatchId);
+  if (mAtual?.placar_travado) {
+    // Segunda trava, além do checkbox já vir desabilitado nesse caso.
+    document.getElementById('chk-ao-vivo').checked = false;
+    alert('Esta partida já foi encerrada e o placar está travado — não é possível reabri-la.');
+    return;
+  }
   try {
     await setMatchLive(sumulaMatchId, checked);
     document.getElementById('wrap-placar-ao-vivo').style.display = checked ? 'block' : 'none';
     const m = matches.find(x => x.id === sumulaMatchId);
     if (m) m.status = checked ? 'LIVE' : 'SCHEDULED';
   } catch (e) {
+    document.getElementById('chk-ao-vivo').checked = !checked;
     alert('Erro: ' + e.message);
   }
 }
