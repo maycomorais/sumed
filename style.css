@@ -727,10 +727,6 @@ tr.zone-elim td:nth-child(3) {
   border-color: var(--gold);
   animation: sorteio-roleta-pulse 0.22s ease-in-out infinite alternate;
 }
-.sorteio-roleta-shield.sorteio-girando.sorteio-tensao {
-  border-color: var(--danger-strong);
-  animation: sorteio-roleta-tensao 0.14s ease-in-out infinite;
-}
 .sorteio-roleta-shield.sorteio-revelado {
   border-color: var(--gold-bright);
   box-shadow: 0 0 40px var(--gold-glow);
@@ -739,11 +735,6 @@ tr.zone-elim td:nth-child(3) {
 @keyframes sorteio-roleta-pulse {
   from { transform: scale(1); }
   to { transform: scale(1.035); }
-}
-@keyframes sorteio-roleta-tensao {
-  0% { transform: translateX(-3px) scale(1.02); }
-  50% { transform: translateX(3px) scale(1.06); }
-  100% { transform: translateX(-3px) scale(1.02); }
 }
 @keyframes sorteio-roleta-confirma {
   0% { transform: scale(0.9); }
@@ -1737,18 +1728,4 @@ tr.zone-elim td:nth-child(3) {
   display: flex;
   align-items: center;
   justify-content: center;
-}
-
-/* =====================================================================
-   FALLBACK PARA IMAGENS QUEBRADAS (usado com onerror)
-   ===================================================================== */
-img[src=""],
-img:not([src]) {
-  opacity: 0;
-}
-/* Os placeholders são aplicados via JavaScript, mas garantimos
-   que elementos com erro de carregamento não fiquem visíveis. */
-img[onerror] {
-  min-width: 24px;
-  min-height: 24px;
 }

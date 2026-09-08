@@ -532,9 +532,10 @@ function adicionarItemProgresso(gameIndex) {
   document.getElementById('sorteio-progresso-lista').prepend(item);
 }
 
-// Aciona a revelação do passo atual (um time por clique). Ao terminar,
-// avança pro próximo passo — ou, se era o último, revela a folga e libera
-// "Gerar Restante".
+// Aciona a revelação do passo atual (um time por clique). O escudo sorteado
+// fica visível parado até o próximo clique — é só aí que a tela reseta pro
+// próximo passo e a roleta gira de novo. Ao terminar o último passo, revela
+// a folga e libera "Gerar Restante".
 async function sortearProximoUI() {
   if (sorteioAnimacaoAtiva || sorteioPassoAtual >= sorteioPassos.length) return;
 
@@ -542,13 +543,16 @@ async function sortearProximoUI() {
   sorteioPularSolicitado = false;
   document.getElementById('btn-sortear-proximo').disabled = true;
 
+  // Só troca o rótulo e reseta o escudo pra "?" agora, no clique — assim o
+  // resultado anterior continua visível até o usuário decidir seguir.
+  prepararProximaEtapaUI();
+
   const passo = sorteioPassos[sorteioPassoAtual];
   await animarRoleta(passo.teamId, sorteioPoolAtual);
   sorteioPoolAtual = sorteioPoolAtual.filter(id => id !== passo.teamId);
   if (passo.slot === 'b') adicionarItemProgresso(passo.gameIndex);
 
   sorteioPassoAtual++;
-  await sleep(1400); // deixa o resultado visível um instante antes de seguir
 
   if (sorteioPassoAtual >= sorteioPassos.length) {
     document.getElementById('btn-sortear-proximo').style.display = 'none';
@@ -556,7 +560,6 @@ async function sortearProximoUI() {
     await revelarFolgaFinal();
     document.getElementById('btn-gerar-restante').style.display = 'block';
   } else {
-    prepararProximaEtapaUI();
     document.getElementById('btn-sortear-proximo').disabled = false;
   }
 
@@ -592,9 +595,10 @@ async function revelarFolgaFinal() {
   `;
 }
 
-// Efeito "roleta de prêmio": gira rápido, desacelera, quase para num time
-// (tensão), acelera de novo de surpresa, e só então desacelera de vez até
-// travar no resultado real. Se "pular animação" for clicado, encerra na hora.
+// Efeito "roleta": gira rápido e constante, depois desacelera suavemente
+// até travar no resultado real. Sem pausas nem "quase acerta" no meio — só
+// o giro e a parada, pra não confundir com o resultado de verdade. Se
+// "pular animação" for clicado, encerra na hora.
 function animarRoleta(resultadoTeamId, pool) {
   return new Promise(resolve => {
     const shield = document.getElementById('sorteio-roleta-shield');
@@ -621,15 +625,11 @@ function animarRoleta(resultadoTeamId, pool) {
     shield.className = 'sorteio-roleta-shield sorteio-girando';
     nomeEl.innerText = '';
 
-    // Fases: gira rápido -> desacelera -> "quase para" num decoy (tensão) ->
-    // acelera de novo (surpresa, ainda não acabou) -> desacelera de vez até
-    // o resultado verdadeiro (fixado só no finalizar(), nunca antes).
+    // 12s no total: 9s girando rápido e constante, últimos 3s desacelerando
+    // suavemente (ease-out) até parar exatamente no resultado real.
     const FASES = [
-      { tipo: 'girar', duracao: 2500, intervaloIni: 70, intervaloFim: 70 },
-      { tipo: 'girar', duracao: 1800, intervaloIni: 70, intervaloFim: 380 },
-      { tipo: 'pausa', duracao: 800 },
-      { tipo: 'girar', duracao: 1000, intervaloIni: 90, intervaloFim: 90 },
-      { tipo: 'girar', duracao: 2400, intervaloIni: 90, intervaloFim: 700 },
+      { duracao: 9000, intervaloIni: 70, intervaloFim: 70 },
+      { duracao: 3000, intervaloIni: 70, intervaloFim: 700 },
     ];
 
     let faseIdx = 0;
@@ -646,17 +646,6 @@ function animarRoleta(resultadoTeamId, pool) {
       if (sorteioPularSolicitado) { finalizar(); return; }
 
       const fase = FASES[faseIdx];
-
-      if (fase.tipo === 'pausa') {
-        // "Quase parou" — segura num candidato aleatório por um instante,
-        // com destaque visual de tensão, antes de decidir se vai mesmo parar aqui.
-        shield.classList.add('sorteio-tensao');
-        renderCandidato(candidatos[Math.floor(Math.random() * candidatos.length)]);
-        setTimeout(avancarFase, fase.duracao);
-        return;
-      }
-
-      shield.classList.remove('sorteio-tensao');
       renderCandidato(candidatos[Math.floor(Math.random() * candidatos.length)]);
 
       const progresso = Math.min(tempoNaFase / fase.duracao, 1);
@@ -1057,11 +1046,9 @@ function editTeam(teamId) {
   document.getElementById('team-staff').value = t.comissao_tecnica === 'A definir' ? '' : t.comissao_tecnica;
   document.getElementById('team-marketing').value = (t.diretor_marketing && t.diretor_marketing !== 'A definir') ? t.diretor_marketing : '';
   if (t.escudo_url) {
-  document.getElementById('escudo-preview').src = t.escudo_url;
-  document.getElementById('escudo-preview').setAttribute('loading', 'lazy');
-  document.getElementById('escudo-preview').setAttribute('decoding', 'async');
-  document.getElementById('escudo-preview').style.display = 'block';
-}
+    document.getElementById('escudo-preview').src = t.escudo_url;
+    document.getElementById('escudo-preview').style.display = 'block';
+  }
 
   document.getElementById('btn-add-jogador-row').style.display = 'none';
   renderElencoEdicao(t);
@@ -1102,7 +1089,7 @@ function renderElencoEdicao(t) {
   const existentesHtml = jogadores.map(j => `
     <div class="jogador-card">
       <div class="jogador-card-header">
-        <img class="jogador-card-avatar" id="elprev_${j.id}" src="${j.foto_url || ''}" style="${j.foto_url ? '' : 'display:none;'}" loading="lazy" decoding="async" onerror="this.style.display='none';">
+        <img class="jogador-card-avatar" id="elprev_${j.id}" src="${j.foto_url || ''}" style="${j.foto_url ? '' : 'display:none;'}">
         <input type="text" class="form-control" style="flex:1;" id="el_nome_${j.id}" value="${j.nome}" placeholder="Nome">
       </div>
       <div class="jogador-card-row">
@@ -1252,16 +1239,16 @@ function renderAdminTeamsList() {
   if (!container) return;
 
   container.innerHTML = teams.map(t => `
-  <div class="card" style="display:flex; align-items:center; gap:12px; margin-bottom:8px;">
-    ${t.escudo_url ? `<img src="${t.escudo_url}" class="upload-preview" loading="lazy" decoding="async" onerror="this.onerror=null; this.src=''; this.parentElement.innerHTML='<div style=\\'font-size:1.8rem;\\'>🛡️</div>';">` : '<div style="font-size:1.8rem;">🛡️</div>'}
-    <div style="flex:1;">
-      <b>${t.nome}</b>
-      <p style="font-size:0.8rem; color:var(--text-muted);">${(t.jogadores || []).length} jogador(es) cadastrado(s)</p>
+    <div class="card" style="display:flex; align-items:center; gap:12px; margin-bottom:8px;">
+      ${t.escudo_url ? `<img src="${t.escudo_url}" class="upload-preview">` : '<div style="font-size:1.8rem;">🛡️</div>'}
+      <div style="flex:1;">
+        <b>${t.nome}</b>
+        <p style="font-size:0.8rem; color:var(--text-muted);">${(t.jogadores || []).length} jogador(es) cadastrado(s)</p>
+      </div>
+      <button class="btn-secondary" onclick="editTeam('${t.id}')">Editar</button>
+      ${podeExcluirEquipe() ? `<button class="btn-remove" title="Excluir equipe" onclick="deleteTeamUI('${t.id}', '${(t.nome || '').replace(/'/g, "\\'")}')">✕</button>` : ''}
     </div>
-    <button class="btn-secondary" onclick="editTeam('${t.id}')">Editar</button>
-    ${podeExcluirEquipe() ? `<button class="btn-remove" title="Excluir equipe" onclick="deleteTeamUI('${t.id}', '${(t.nome || '').replace(/'/g, "\\'")}')">✕</button>` : ''}
-  </div>
-`).join('') || '<p style="color:var(--text-muted); text-align:center; padding:16px 0;">Nenhuma equipe cadastrada nesta categoria ainda.</p>';
+  `).join('') || '<p style="color:var(--text-muted); text-align:center; padding:16px 0;">Nenhuma equipe cadastrada nesta categoria ainda.</p>';
 }
 
 // Excluir equipe: mesma regra de quem pode CRIAR equipe (AdminMaster/Presidente).
@@ -1325,7 +1312,7 @@ async function renderAdminSponsorsList() {
     const sponsors = await fetchAllSponsors();
     container.innerHTML = sponsors.map(s => `
       <div class="card" style="display:flex; align-items:center; gap:12px; margin-bottom:8px; ${s.ativo ? '' : 'opacity:0.5;'}">
-        <img src="${s.logo_url}" class="upload-preview" style="border-radius:6px;" loading="lazy" decoding="async" onerror="this.onerror=null; this.src=''; this.parentElement.innerHTML='<div style=\\'font-size:1.5rem;\\'>💰</div>';">
+        <img src="${s.logo_url}" class="upload-preview" style="border-radius:6px;">
         <div style="flex:1;">
           <b>${s.nome}</b>
           <p style="font-size:0.8rem; color:var(--text-muted);">${s.link || 'sem link'}</p>
@@ -1990,11 +1977,8 @@ async function initIdentidadeTab() {
   try {
     const cfg = await fetchConfig('identidade_visual', IDENTIDADE_PADRAO);
     if (cfg.logo_torneio) {
-      const preview = document.getElementById('identidade-logo-preview');
-      preview.src = cfg.logo_torneio;
-      preview.loading = 'lazy';
-      preview.decoding = 'async';
-      preview.style.display = 'block';
+      document.getElementById('identidade-logo-preview').src = cfg.logo_torneio;
+      document.getElementById('identidade-logo-preview').style.display = 'block';
     }
     if (cfg.patrocinador_master_logo) {
       document.getElementById('identidade-master-preview').src = cfg.patrocinador_master_logo;
