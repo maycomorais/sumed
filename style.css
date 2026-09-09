@@ -1729,3 +1729,14 @@ tr.zone-elim td:nth-child(3) {
   align-items: center;
   justify-content: center;
 }
+
+/* =====================================================================
+   IMAGENS DINÂMICAS — rede de segurança pra falha de carregamento
+   ===================================================================== */
+/* A troca de verdade acontece via onerror em cada <img> (substitui o
+   elemento por um ícone/placeholder). Isso aqui só evita o "flash" feio
+   do ícone de imagem quebrada + alt text do navegador no instante entre
+   a falha do carregamento e o onerror rodar. */
+img {
+  color: transparent;
+}

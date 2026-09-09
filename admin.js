@@ -196,7 +196,15 @@ function previewImage(inputId, previewId) {
   const preview = document.getElementById(previewId);
   const file = input.files[0];
   if (!file) { preview.style.display = 'none'; return; }
-  preview.src = URL.createObjectURL(file);
+
+  // Libera a URL de objeto anterior antes de criar uma nova — sem isso,
+  // cada troca de arquivo (ex: usuário testando fotos diferentes) vazava
+  // memória, já que blob URLs não são coletadas até o documento recarregar.
+  if (preview.dataset.blobUrl) URL.revokeObjectURL(preview.dataset.blobUrl);
+
+  const blobUrl = URL.createObjectURL(file);
+  preview.dataset.blobUrl = blobUrl;
+  preview.src = blobUrl;
   preview.style.display = 'block';
 }
 
@@ -589,7 +597,7 @@ async function revelarFolgaFinal() {
   const t = teams.find(x => x.id === sorteioByeTeamId);
   reveal.style.display = 'block';
   reveal.innerHTML = `
-    <div class="sorteio-folga-shield">${t?.escudo_url ? `<img src="${t.escudo_url}">` : '⏸️'}</div>
+    <div class="sorteio-folga-shield">${t?.escudo_url ? `<img src="${t.escudo_url}" decoding="async" onerror="this.onerror=null; this.replaceWith('⏸️');">` : '⏸️'}</div>
     <p class="sorteio-folga-nome">${t?.nome || '?'}</p>
     <p class="sorteio-folga-legenda">folga na Rodada 1</p>
   `;
@@ -599,6 +607,9 @@ async function revelarFolgaFinal() {
 // até travar no resultado real. Sem pausas nem "quase acerta" no meio — só
 // o giro e a parada, pra não confundir com o resultado de verdade. Se
 // "pular animação" for clicado, encerra na hora.
+// OBS: as imagens aqui (e na revelação da folga acima) são renderizadas
+// SEM loading="lazy" de propósito — é uma animação em tempo real, não dá
+// pra deixar o navegador decidir adiar o carregamento de um frame do giro.
 function animarRoleta(resultadoTeamId, pool) {
   return new Promise(resolve => {
     const shield = document.getElementById('sorteio-roleta-shield');
@@ -608,7 +619,7 @@ function animarRoleta(resultadoTeamId, pool) {
     const renderCandidato = (teamId) => {
       const t = teams.find(x => x.id === teamId);
       shield.innerHTML = t?.escudo_url
-        ? `<img src="${t.escudo_url}">`
+        ? `<img src="${t.escudo_url}" decoding="async" onerror="this.onerror=null; this.outerHTML='<span class=\\'sorteio-shield-placeholder\\'>🛡️</span>';">`
         : `<span class="sorteio-shield-placeholder">🛡️</span>`;
     };
 
@@ -625,10 +636,10 @@ function animarRoleta(resultadoTeamId, pool) {
     shield.className = 'sorteio-roleta-shield sorteio-girando';
     nomeEl.innerText = '';
 
-    // 12s no total: 9s girando rápido e constante, últimos 3s desacelerando
+    // 9s no total: 6s girando rápido e constante, últimos 3s desacelerando
     // suavemente (ease-out) até parar exatamente no resultado real.
     const FASES = [
-      { duracao: 9000, intervaloIni: 70, intervaloFim: 70 },
+      { duracao: 6000, intervaloIni: 70, intervaloFim: 70 },
       { duracao: 3000, intervaloIni: 70, intervaloFim: 700 },
     ];
 
@@ -929,7 +940,7 @@ function addJogadorRow() {
   card.id = id;
   card.innerHTML = `
     <div class="jogador-card-header">
-      <img class="jogador-card-avatar" id="prev_${id}" style="display:none;">
+      <img class="jogador-card-avatar" id="prev_${id}" decoding="async" style="display:none;">
       <input type="text" class="form-control" style="flex:1;" placeholder="Nome do jogador" oninput="updateJogadorField('${id}','nome',this.value); refreshCapitaoOptions();">
     </div>
     <div class="jogador-card-row">
@@ -962,7 +973,10 @@ function handleJogadorFoto(rowId, input) {
   if (row) row.fotoFile = input.files[0] || null;
   const preview = document.getElementById(`prev_${rowId}`);
   if (row.fotoFile) {
-    preview.src = URL.createObjectURL(row.fotoFile);
+    if (preview.dataset.blobUrl) URL.revokeObjectURL(preview.dataset.blobUrl);
+    const blobUrl = URL.createObjectURL(row.fotoFile);
+    preview.dataset.blobUrl = blobUrl;
+    preview.src = blobUrl;
     preview.style.display = 'block';
   }
 }
@@ -1046,8 +1060,11 @@ function editTeam(teamId) {
   document.getElementById('team-staff').value = t.comissao_tecnica === 'A definir' ? '' : t.comissao_tecnica;
   document.getElementById('team-marketing').value = (t.diretor_marketing && t.diretor_marketing !== 'A definir') ? t.diretor_marketing : '';
   if (t.escudo_url) {
-    document.getElementById('escudo-preview').src = t.escudo_url;
-    document.getElementById('escudo-preview').style.display = 'block';
+    const escudoPreview = document.getElementById('escudo-preview');
+    escudoPreview.src = t.escudo_url;
+    escudoPreview.decoding = 'async';
+    escudoPreview.onerror = () => { escudoPreview.style.display = 'none'; };
+    escudoPreview.style.display = 'block';
   }
 
   document.getElementById('btn-add-jogador-row').style.display = 'none';
@@ -1089,7 +1106,7 @@ function renderElencoEdicao(t) {
   const existentesHtml = jogadores.map(j => `
     <div class="jogador-card">
       <div class="jogador-card-header">
-        <img class="jogador-card-avatar" id="elprev_${j.id}" src="${j.foto_url || ''}" style="${j.foto_url ? '' : 'display:none;'}">
+        <img class="jogador-card-avatar" id="elprev_${j.id}" src="${j.foto_url || ''}" loading="lazy" decoding="async" style="${j.foto_url ? '' : 'display:none;'}" onerror="this.style.display='none';">
         <input type="text" class="form-control" style="flex:1;" id="el_nome_${j.id}" value="${j.nome}" placeholder="Nome">
       </div>
       <div class="jogador-card-row">
@@ -1114,7 +1131,7 @@ function renderElencoEdicao(t) {
     <div class="jogador-card novo">
       <p style="color:var(--gold); font-size:0.78rem; font-weight:700; margin-bottom:10px;">➕ Novo jogador — preencha e cadastre</p>
       <div class="jogador-card-header">
-        <img class="jogador-card-avatar" id="elprev_novo" style="display:none;">
+        <img class="jogador-card-avatar" id="elprev_novo" decoding="async" style="display:none;">
         <input type="text" class="form-control" style="flex:1;" id="el_novo_nome" placeholder="Nome do novo jogador">
       </div>
       <div class="jogador-card-row">
@@ -1143,7 +1160,10 @@ function handleElencoFoto(key, input, previewId) {
   elencoFotoPendente[key] = input.files[0] || null;
   const preview = document.getElementById(previewId);
   if (elencoFotoPendente[key]) {
-    preview.src = URL.createObjectURL(elencoFotoPendente[key]);
+    if (preview.dataset.blobUrl) URL.revokeObjectURL(preview.dataset.blobUrl);
+    const blobUrl = URL.createObjectURL(elencoFotoPendente[key]);
+    preview.dataset.blobUrl = blobUrl;
+    preview.src = blobUrl;
     preview.style.display = 'block';
   }
 }
@@ -1240,7 +1260,7 @@ function renderAdminTeamsList() {
 
   container.innerHTML = teams.map(t => `
     <div class="card" style="display:flex; align-items:center; gap:12px; margin-bottom:8px;">
-      ${t.escudo_url ? `<img src="${t.escudo_url}" class="upload-preview">` : '<div style="font-size:1.8rem;">🛡️</div>'}
+      ${t.escudo_url ? `<img src="${t.escudo_url}" class="upload-preview" loading="lazy" decoding="async" onerror="this.onerror=null; this.outerHTML='<div style=\\'font-size:1.8rem;\\'>🛡️</div>';">` : '<div style="font-size:1.8rem;">🛡️</div>'}
       <div style="flex:1;">
         <b>${t.nome}</b>
         <p style="font-size:0.8rem; color:var(--text-muted);">${(t.jogadores || []).length} jogador(es) cadastrado(s)</p>
@@ -1312,7 +1332,7 @@ async function renderAdminSponsorsList() {
     const sponsors = await fetchAllSponsors();
     container.innerHTML = sponsors.map(s => `
       <div class="card" style="display:flex; align-items:center; gap:12px; margin-bottom:8px; ${s.ativo ? '' : 'opacity:0.5;'}">
-        <img src="${s.logo_url}" class="upload-preview" style="border-radius:6px;">
+        <img src="${s.logo_url}" class="upload-preview" style="border-radius:6px;" loading="lazy" decoding="async" onerror="this.onerror=null; this.outerHTML='<div style=\\'font-size:1.5rem;\\'>💰</div>';">
         <div style="flex:1;">
           <b>${s.nome}</b>
           <p style="font-size:0.8rem; color:var(--text-muted);">${s.link || 'sem link'}</p>
@@ -1977,12 +1997,18 @@ async function initIdentidadeTab() {
   try {
     const cfg = await fetchConfig('identidade_visual', IDENTIDADE_PADRAO);
     if (cfg.logo_torneio) {
-      document.getElementById('identidade-logo-preview').src = cfg.logo_torneio;
-      document.getElementById('identidade-logo-preview').style.display = 'block';
+      const logoPreview = document.getElementById('identidade-logo-preview');
+      logoPreview.src = cfg.logo_torneio;
+      logoPreview.decoding = 'async';
+      logoPreview.onerror = () => { logoPreview.style.display = 'none'; };
+      logoPreview.style.display = 'block';
     }
     if (cfg.patrocinador_master_logo) {
-      document.getElementById('identidade-master-preview').src = cfg.patrocinador_master_logo;
-      document.getElementById('identidade-master-preview').style.display = 'block';
+      const masterPreview = document.getElementById('identidade-master-preview');
+      masterPreview.src = cfg.patrocinador_master_logo;
+      masterPreview.decoding = 'async';
+      masterPreview.onerror = () => { masterPreview.style.display = 'none'; };
+      masterPreview.style.display = 'block';
     }
     document.getElementById('identidade-master-link').value = cfg.patrocinador_master_link || '';
   } catch (e) {
@@ -2001,8 +2027,10 @@ async function saveIdentidadeVisual() {
     const masterFile = document.getElementById('identidade-logo-master').files[0];
 
     const novo = {
-      logo_torneio: logoFile ? await uploadImageToImgbb(logoFile) : atual.logo_torneio,
-      patrocinador_master_logo: masterFile ? await uploadImageToImgbb(masterFile) : atual.patrocinador_master_logo,
+      // Exibidos pequenos (44×44 na topbar, 92×36 no bloco do master) —
+      // 200px dá folga suficiente pra retina sem pesar o carregamento.
+      logo_torneio: logoFile ? await uploadImageToImgbb(logoFile, { maxWidth: 200, maxHeight: 200 }) : atual.logo_torneio,
+      patrocinador_master_logo: masterFile ? await uploadImageToImgbb(masterFile, { maxWidth: 200, maxHeight: 200 }) : atual.patrocinador_master_logo,
       patrocinador_master_link: document.getElementById('identidade-master-link').value || null,
     };
 

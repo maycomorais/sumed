@@ -4,48 +4,32 @@
 // =====================================================================
 
 // ---------------------------------------------------------------------
-// UPLOAD DE IMAGEM — ImgBB (com conversão para WebP antes do envio)
+// UPLOAD DE IMAGEM — ImgBB, com redimensionamento + conversão WebP
 // ---------------------------------------------------------------------
 // ⚠️ Esta chave fica exposta no código do cliente por natureza do ImgBB
 // (não existe modo "server-only" nesse serviço). Se quiser trocar a
 // chave, é só substituir a constante abaixo.
 const IMGBB_API_KEY = 'd6ade30e77d706a440f7c03f08af33c4';
 
-function convertToWebP(blob, quality = 70) {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onerror = () => reject(new Error('Falha ao carregar a imagem para conversão.'));
-    img.onload = () => {
-      const canvas = document.createElement('canvas');
-      canvas.width = img.width;
-      canvas.height = img.height;
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(img, 0, 0);
-      canvas.toBlob(
-        (webpBlob) => (webpBlob ? resolve(webpBlob) : reject(new Error('Falha ao converter imagem para WebP.'))),
-        'image/webp',
-        quality / 100
-      );
-    };
-    img.src = URL.createObjectURL(blob);
-  });
-}
-
 /**
- * Redimensiona uma imagem para caber dentro de maxWidth × maxHeight,
- * mantendo a proporção. Retorna um Blob (imagem original ainda não convertida).
+ * Redimensiona (mantendo proporção) e converte pra WebP numa ÚNICA passagem
+ * pelo canvas. Antes tínhamos duas conversões (redimensiona -> JPEG, depois
+ * JPEG -> WebP), o que decodifica/recodifica a imagem duas vezes à toa —
+ * mais lento e com perda de qualidade extra sem necessidade nenhuma.
  * @param {File} file
- * @param {number} maxWidth
- * @param {number} maxHeight
+ * @param {Object} options
+ * @param {number} options.maxWidth
+ * @param {number} options.maxHeight
+ * @param {number} options.quality - qualidade WebP, 0-100
  * @returns {Promise<Blob>}
  */
-function resizeImage(file, maxWidth = 600, maxHeight = 600) {
+function resizeAndConvertToWebP(file, { maxWidth = 600, maxHeight = 600, quality = 70 } = {}) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onerror = () => reject(new Error('Falha ao ler o arquivo de imagem.'));
     reader.onload = (e) => {
       const img = new Image();
-      img.onerror = () => reject(new Error('Falha ao carregar a imagem para redimensionamento.'));
+      img.onerror = () => reject(new Error('Falha ao carregar a imagem para processamento.'));
       img.onload = () => {
         let width = img.width;
         let height = img.height;
@@ -54,16 +38,17 @@ function resizeImage(file, maxWidth = 600, maxHeight = 600) {
           width = Math.round(width * ratio);
           height = Math.round(height * ratio);
         }
+
         const canvas = document.createElement('canvas');
         canvas.width = width;
         canvas.height = height;
         const ctx = canvas.getContext('2d');
         ctx.drawImage(img, 0, 0, width, height);
-        // Exporta como JPEG (ou PNG) para depois converter para WebP no próximo passo
+
         canvas.toBlob(
-          (blob) => (blob ? resolve(blob) : reject(new Error('Falha ao redimensionar a imagem.'))),
-          'image/jpeg',
-          0.92
+          (blob) => (blob ? resolve(blob) : reject(new Error('Falha ao converter imagem para WebP.'))),
+          'image/webp',
+          quality / 100
         );
       };
       img.src = e.target.result;
@@ -73,16 +58,18 @@ function resizeImage(file, maxWidth = 600, maxHeight = 600) {
 }
 
 /**
- * Envia uma imagem para o ImgBB (redimensiona e converte para WebP antes)
- * @param {File} file - arquivo de imagem original
+ * Envia uma imagem para o ImgBB — redimensiona e converte pra WebP antes,
+ * pra manter upload rápido e arquivos pequenos (o gargalo de carregamento
+ * do app era justamente subir/exibir fotos em resolução original).
+ * @param {File} file
  * @param {Object} options
- * @param {number} options.quality - qualidade WebP (0-100), padrão 70
- * @param {number} options.maxWidth - largura máxima, padrão 600
- * @param {number} options.maxHeight - altura máxima, padrão 600
+ * @param {number} options.maxWidth - padrão 600
+ * @param {number} options.maxHeight - padrão 600
+ * @param {number} options.quality - qualidade WebP 0-100, padrão 70
  * @returns {Promise<string>} URL da imagem no ImgBB
  */
 async function uploadImageToImgbb(file, options = {}) {
-  const { quality = 70, maxWidth = 600, maxHeight = 600 } = options;
+  const { maxWidth = 600, maxHeight = 600, quality = 70 } = options;
   const tiposPermitidos = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
   if (!tiposPermitidos.includes(file.type)) {
     throw new Error('Formato inválido. Use JPG, PNG, WEBP ou GIF.');
@@ -91,9 +78,7 @@ async function uploadImageToImgbb(file, options = {}) {
     throw new Error('Imagem muito grande. Máximo 10MB (limite do ImgBB).');
   }
 
-  // Redimensiona (se necessário) e depois converte para WebP
-  const resizedBlob = await resizeImage(file, maxWidth, maxHeight);
-  const webpBlob = await convertToWebP(resizedBlob, quality);
+  const webpBlob = await resizeAndConvertToWebP(file, { maxWidth, maxHeight, quality });
 
   const formData = new FormData();
   formData.append('key', IMGBB_API_KEY);
@@ -129,7 +114,7 @@ async function fetchTeams(categoria) {
 
 // escudoFile é opcional (File do <input type="file">)
 async function createTeam({ nome, presidente, capitao, comissao_tecnica, diretor_marketing, categoria, escudoFile, jogadores }) {
-  const escudo_url = escudoFile ? await uploadImageToImgbb(escudoFile) : null;
+  const escudo_url = escudoFile ? await uploadImageToImgbb(escudoFile, { maxWidth: 300, maxHeight: 300 }) : null;
 
   const { data: equipe, error } = await sb
     .from('equipes')
@@ -156,7 +141,7 @@ async function createTeam({ nome, presidente, capitao, comissao_tecnica, diretor
 }
 
 async function addJogador(equipeId, { nome, numero, posicao, fotoFile, convidado }) {
-  const foto_url = fotoFile ? await uploadImageToImgbb(fotoFile) : null;
+  const foto_url = fotoFile ? await uploadImageToImgbb(fotoFile, { maxWidth: 200, maxHeight: 200 }) : null;
 
   const { data: jogador, error } = await sb
     .from('jogadores')
@@ -430,7 +415,9 @@ async function fetchAllSponsors() {
 }
 
 async function createSponsor({ nome, link, ordem, logoFile }) {
-  const logo_url = await uploadImageToImgbb(logoFile);
+  // Exibido a no máximo 150×64px (card de patrocinador) — 300px dá margem
+  // de sobra pra telas retina sem carregar um arquivo desnecessariamente grande.
+  const logo_url = await uploadImageToImgbb(logoFile, { maxWidth: 300, maxHeight: 300 });
 
   const { data: sponsor, error } = await sb
     .from('patrocinadores')
@@ -520,7 +507,7 @@ async function updateTeam(teamId, { nome, presidente, capitao, comissao_tecnica,
   if (error) throw error;
 
   if (escudoFile) {
-    const url = await uploadImageToImgbb(escudoFile);
+    const url = await uploadImageToImgbb(escudoFile, { maxWidth: 300, maxHeight: 300 });
     await sb.from('equipes').update({ escudo_url: url }).eq('id', teamId);
     return url;
   }
@@ -701,7 +688,7 @@ async function updateJogador(jogadorId, { nome, numero, posicao, fotoFile, convi
   if (error) throw error;
 
   if (fotoFile) {
-    const url = await uploadImageToImgbb(fotoFile);
+    const url = await uploadImageToImgbb(fotoFile, { maxWidth: 200, maxHeight: 200 });
     await sb.from('jogadores').update({ foto_url: url }).eq('id', jogadorId);
   }
 }
