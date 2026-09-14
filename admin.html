@@ -484,7 +484,7 @@
 
         <div id="wrap-penaltis" style="display:none; margin-top:14px;">
           <div style="display:grid; grid-template-columns:1fr 1fr auto auto; gap:8px; align-items:center;">
-            <select id="pen-equipe" class="form-control"></select>
+            <select id="pen-equipe" class="form-control" onchange="populateJogadoresDoSelect('pen-equipe','pen-jogador')"></select>
             <select id="pen-jogador" class="form-control"></select>
             <input type="number" id="pen-ordem" class="form-control" placeholder="Ordem" style="width:70px;">
             <label style="display:flex; align-items:center; gap:4px; font-size:0.75rem;"><input type="checkbox" id="pen-convertido" checked> ✓</label>

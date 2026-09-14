@@ -1643,7 +1643,7 @@ async function openSumulaAdmin(matchId) {
   document.getElementById('pen-equipe').innerHTML = equipeOptions;
 
   populateJogadoresDoSelect('gol-equipe', 'gol-jogador');
-  populateJogadoresDoSelect('gol-equipe', 'gol-assistencia', true);
+  populateJogadoresDoSelect('gol-equipe', 'gol-assistencia');
   populateJogadoresDoSelect('pen-equipe', 'pen-jogador');
 
   switchAdminScreen('sumula-admin');
@@ -1660,11 +1660,21 @@ function jogadoresDaEquipeSelecionada(selectEquipeId) {
   return teams.find(t => t.id === equipeId)?.jogadores || [];
 }
 
-function populateJogadoresDoSelect(selectEquipeId, selectJogadorId, comOpcaoVazia) {
+// IDs de select que precisam de uma opção "vazia" além dos jogadores — o
+// rótulo é decidido aqui, pelo próprio id de destino, em vez de depender de
+// quem chama a função lembrar de passar um terceiro argumento toda vez.
+// Isso evita o bug de o onchange de "gol-equipe" no HTML re-popular
+// "gol-assistencia" sem o "Sem assistência" quando o admin troca de time.
+const SELECTS_COM_OPCAO_VAZIA = {
+  'gol-assistencia': 'Sem assistência',
+};
+
+function populateJogadoresDoSelect(selectEquipeId, selectJogadorId) {
   const jogadores = jogadoresDaEquipeSelecionada(selectEquipeId);
   const opcoes = jogadores.map(j => `<option value="${j.id}">${j.numero ? '#' + j.numero + ' ' : ''}${j.nome}</option>`).join('');
-  const vazio = comOpcaoVazia ? '<option value="">Sem assistência</option>' : '';
-  document.getElementById(selectJogadorId).innerHTML = vazio + (opcoes || (comOpcaoVazia ? '' : '<option value="">Sem jogadores</option>'));
+  const labelVazio = SELECTS_COM_OPCAO_VAZIA[selectJogadorId];
+  const vazio = labelVazio ? `<option value="">${labelVazio}</option>` : '';
+  document.getElementById(selectJogadorId).innerHTML = vazio + (opcoes || (labelVazio ? '' : '<option value="">Sem jogadores</option>'));
 }
 
 async function toggleAoVivoUI(checked) {
@@ -2119,8 +2129,8 @@ async function saveIdentidadeVisual() {
     const novo = {
       // Exibidos pequenos (44×44 na topbar, 92×36 no bloco do master) —
       // 200px dá folga suficiente pra retina sem pesar o carregamento.
-      logo_torneio: logoFile ? await uploadImageToSupabase(logoFile, { maxWidth: 200, maxHeight: 200 }) : atual.logo_torneio,
-      patrocinador_master_logo: masterFile ? await uploadImageToSupabase(masterFile, { maxWidth: 200, maxHeight: 200 }) : atual.patrocinador_master_logo,
+      logo_torneio: logoFile ? await uploadImageToImgbb(logoFile, { maxWidth: 200, maxHeight: 200 }) : atual.logo_torneio,
+      patrocinador_master_logo: masterFile ? await uploadImageToImgbb(masterFile, { maxWidth: 200, maxHeight: 200 }) : atual.patrocinador_master_logo,
       patrocinador_master_link: document.getElementById('identidade-master-link').value || null,
     };
 
