@@ -9,7 +9,7 @@
 // ⚠️ Esta chave fica exposta no código do cliente por natureza do ImgBB
 // (não existe modo "server-only" nesse serviço). Se quiser trocar a
 // chave, é só substituir a constante abaixo.
-const IMGBB_API_KEY = 'd6ade30e77d706a440f7c03f08af33c4';
+// const IMGBB_API_KEY = 'd6ade30e77d706a440f7c03f08af33c4';
 
 /**
  * Redimensiona (mantendo proporção) e converte pra WebP numa ÚNICA passagem
@@ -57,45 +57,52 @@ function resizeAndConvertToWebP(file, { maxWidth = 600, maxHeight = 600, quality
   });
 }
 
+// ---------------------------------------------------------------------
+// UPLOAD DE IMAGEM — Supabase Storage
+// ---------------------------------------------------------------------
+// Bucket único 'midias', com pastas por tipo (escudos/jogadores/
+// patrocinadores/identidade). Sempre redimensiona + converte pra WebP
+// antes de subir, então os arquivos ficam pequenos e o carregamento do
+// app público é bem mais rápido do que com o ImgBB.
+const SUPABASE_STORAGE_BUCKET = 'midias';
+
 /**
- * Envia uma imagem para o ImgBB — redimensiona e converte pra WebP antes,
- * pra manter upload rápido e arquivos pequenos (o gargalo de carregamento
- * do app era justamente subir/exibir fotos em resolução original).
+ * Envia uma imagem para o Supabase Storage, redimensionando e convertendo
+ * pra WebP antes. Retorna a URL pública.
  * @param {File} file
  * @param {Object} options
  * @param {number} options.maxWidth - padrão 600
  * @param {number} options.maxHeight - padrão 600
  * @param {number} options.quality - qualidade WebP 0-100, padrão 70
- * @returns {Promise<string>} URL da imagem no ImgBB
+ * @param {string} options.folder - subpasta dentro do bucket (ex: 'escudos')
+ * @returns {Promise<string>} URL pública no Supabase Storage
  */
-async function uploadImageToImgbb(file, options = {}) {
-  const { maxWidth = 600, maxHeight = 600, quality = 70 } = options;
+async function uploadImageToSupabase(file, { maxWidth = 600, maxHeight = 600, quality = 70, folder = 'geral' } = {}) {
   const tiposPermitidos = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
   if (!tiposPermitidos.includes(file.type)) {
     throw new Error('Formato inválido. Use JPG, PNG, WEBP ou GIF.');
   }
   if (file.size > 10 * 1024 * 1024) {
-    throw new Error('Imagem muito grande. Máximo 10MB (limite do ImgBB).');
+    throw new Error('Imagem muito grande. Máximo 10MB.');
   }
 
   const webpBlob = await resizeAndConvertToWebP(file, { maxWidth, maxHeight, quality });
 
-  const formData = new FormData();
-  formData.append('key', IMGBB_API_KEY);
-  formData.append('image', webpBlob, 'image.webp');
-  formData.append('name', file.name.replace(/\.[^.]+$/, '.webp'));
+  // Nome único com timestamp + sufixo aleatório — evita colisões e
+  // permite cache de 1 ano sem risco de servir arquivo velho.
+  const nomeArquivo = `${folder}/${Date.now()}_${Math.random().toString(36).slice(2, 10)}.webp`;
 
-  const response = await fetch('https://api.imgbb.com/1/upload', {
-    method: 'POST',
-    body: formData,
-  });
+  const { error: uploadError } = await sb.storage
+    .from(SUPABASE_STORAGE_BUCKET)
+    .upload(nomeArquivo, webpBlob, {
+      contentType: 'image/webp',
+      cacheControl: '31536000', // 1 ano
+      upsert: false,
+    });
+  if (uploadError) throw uploadError;
 
-  const data = await response.json();
-  if (!data.success) {
-    throw new Error(`ImgBB: ${data.error?.message || 'Erro desconhecido'}`);
-  }
-
-  return data.data.url;
+  const { data } = sb.storage.from(SUPABASE_STORAGE_BUCKET).getPublicUrl(nomeArquivo);
+  return data.publicUrl;
 }
 
 // ---------------------------------------------------------------------
@@ -114,7 +121,7 @@ async function fetchTeams(categoria) {
 
 // escudoFile é opcional (File do <input type="file">)
 async function createTeam({ nome, presidente, capitao, comissao_tecnica, diretor_marketing, categoria, escudoFile, jogadores }) {
-  const escudo_url = escudoFile ? await uploadImageToImgbb(escudoFile, { maxWidth: 300, maxHeight: 300 }) : null;
+  const escudo_url = escudoFile ? await uploadImageToSupabase(escudoFile, { maxWidth: 300, maxHeight: 300 }) : null;
 
   const { data: equipe, error } = await sb
     .from('equipes')
@@ -141,7 +148,7 @@ async function createTeam({ nome, presidente, capitao, comissao_tecnica, diretor
 }
 
 async function addJogador(equipeId, { nome, numero, posicao, fotoFile, convidado }) {
-  const foto_url = fotoFile ? await uploadImageToImgbb(fotoFile, { maxWidth: 200, maxHeight: 200 }) : null;
+  const foto_url = fotoFile ? await uploadImageToSupabase(fotoFile, { maxWidth: 200, maxHeight: 200 }) : null;
 
   const { data: jogador, error } = await sb
     .from('jogadores')
@@ -395,6 +402,15 @@ async function transferirPartidaDeRodada(matchId, novaRodada, { data, hora, loca
   await saveMatchMeta(matchId, { rodada: Number(novaRodada), data, hora, local });
 }
 
+// Define (ou limpa, se jogadorId for null/vazio) o MVP de uma partida.
+// ⚠️ Requer a coluna `mvp_jogador_id` (uuid, nullable, FK -> jogadores.id)
+// na tabela `partidas` — adicione com uma migração antes de usar:
+//   alter table partidas add column mvp_jogador_id uuid references jogadores(id) on delete set null;
+async function salvarMvpPartida(matchId, jogadorId) {
+  const { error } = await sb.from('partidas').update({ mvp_jogador_id: jogadorId || null }).eq('id', matchId);
+  if (error) throw error;
+}
+
 // ---------------------------------------------------------------------
 // PATROCINADORES
 // ---------------------------------------------------------------------
@@ -417,7 +433,7 @@ async function fetchAllSponsors() {
 async function createSponsor({ nome, link, ordem, logoFile }) {
   // Exibido a no máximo 150×64px (card de patrocinador) — 300px dá margem
   // de sobra pra telas retina sem carregar um arquivo desnecessariamente grande.
-  const logo_url = await uploadImageToImgbb(logoFile, { maxWidth: 300, maxHeight: 300 });
+  const logo_url = await uploadImageToSupabase(logoFile, { maxWidth: 300, maxHeight: 300 });
 
   const { data: sponsor, error } = await sb
     .from('patrocinadores')
@@ -431,6 +447,22 @@ async function createSponsor({ nome, link, ordem, logoFile }) {
 async function toggleSponsor(id, ativo) {
   const { error } = await sb.from('patrocinadores').update({ ativo }).eq('id', id);
   if (error) throw error;
+}
+
+// Edita um patrocinador já cadastrado. logoFile é opcional — se não vier,
+// mantém a logo atual (não força reenvio de imagem só pra trocar o nome/link).
+async function updateSponsor(id, { nome, link, ordem, logoFile }) {
+  const payload = {};
+  if (nome !== undefined) payload.nome = nome;
+  if (link !== undefined) payload.link = link || null;
+  if (ordem !== undefined) payload.ordem = ordem || 0;
+  const { error } = await sb.from('patrocinadores').update(payload).eq('id', id);
+  if (error) throw error;
+
+  if (logoFile) {
+    const logo_url = await uploadImageToSupabase(logoFile, { maxWidth: 300, maxHeight: 300 });
+    await sb.from('patrocinadores').update({ logo_url }).eq('id', id);
+  }
 }
 
 async function deleteSponsor(id) {
@@ -507,7 +539,7 @@ async function updateTeam(teamId, { nome, presidente, capitao, comissao_tecnica,
   if (error) throw error;
 
   if (escudoFile) {
-    const url = await uploadImageToImgbb(escudoFile, { maxWidth: 300, maxHeight: 300 });
+    const url = await uploadImageToSupabase(escudoFile, { maxWidth: 300, maxHeight: 300 });
     await sb.from('equipes').update({ escudo_url: url }).eq('id', teamId);
     return url;
   }
@@ -688,7 +720,7 @@ async function updateJogador(jogadorId, { nome, numero, posicao, fotoFile, convi
   if (error) throw error;
 
   if (fotoFile) {
-    const url = await uploadImageToImgbb(fotoFile, { maxWidth: 200, maxHeight: 200 });
+    const url = await uploadImageToSupabase(fotoFile, { maxWidth: 200, maxHeight: 200 });
     await sb.from('jogadores').update({ foto_url: url }).eq('id', jogadorId);
   }
 }

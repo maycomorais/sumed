@@ -1077,6 +1077,31 @@ async function openSumula(matchId) {
   const teamB = state.teams.find(t => t.id === m.equipe_b)?.nome;
   const extras = m.teve_prorrogacao ? ' <small style="color:var(--gold);">(após prorrogação)</small>' : '';
 
+  // MVP: busca o jogador em qualquer time da categoria (pode ser de A ou B),
+  // já resolvido a partir de state.teams — não precisa de fetch adicional.
+  let mvpBloco = '';
+  if (m.mvp_jogador_id) {
+    let mvp = null;
+    for (const t of state.teams) {
+      const encontrado = (t.jogadores || []).find(j => j.id === m.mvp_jogador_id);
+      if (encontrado) { mvp = { ...encontrado, equipeNome: t.nome }; break; }
+    }
+    if (mvp) {
+      mvpBloco = `
+        <div class="card" style="text-align:center;">
+          <div class="card-title">🏅 MVP da Partida</div>
+          <div style="display:flex; align-items:center; justify-content:center; gap:10px; margin-top:6px;">
+            <div class="roster-avatar" style="width:40px; height:40px;">${mvp.foto_url ? `<img src="${mvp.foto_url}" loading="lazy" decoding="async" onerror="this.onerror=null; this.parentElement.innerHTML='🏅';">` : '🏅'}</div>
+            <div style="text-align:left;">
+              <b>${mvp.nome}</b>
+              <p style="font-size:0.78rem; color:var(--text-muted);">${mvp.equipeNome}</p>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+  }
+
   document.getElementById('modal-title').innerText = 'Súmula de Jogo';
   document.getElementById('modal-body').innerHTML = `
     <div style="text-align:center; margin-bottom:15px;">
@@ -1084,6 +1109,7 @@ async function openSumula(matchId) {
       <small style="color:var(--text-muted);">${m.data ? formatDate(m.data) : ''} • ${m.local || ''}</small>
     </div>
     <div id="sumula-penaltis"></div>
+    ${mvpBloco}
     <div class="card">
       <div class="card-title" style="margin-bottom:8px;">⚽ Gols & Assistências</div>
       <div id="sumula-gols"><p style="font-size:0.85rem; color:var(--text-muted);">Carregando...</p></div>

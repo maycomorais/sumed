@@ -1303,24 +1303,68 @@ async function deleteTeamUI(teamId, teamName) {
 // ---------------------------------------------------------------------
 // PATROCINADORES
 // ---------------------------------------------------------------------
+let editingSponsorId = null;
+
 async function saveSponsor(e) {
   e.preventDefault();
   const nome = document.getElementById('sponsor-name').value;
   const link = document.getElementById('sponsor-link').value;
   const ordem = parseInt(document.getElementById('sponsor-order').value) || 0;
-  const logoFile = document.getElementById('sponsor-logo').files[0];
+  const logoFile = document.getElementById('sponsor-logo').files[0] || null;
 
-  if (!logoFile) { alert('Selecione a logo do patrocinador.'); return; }
+  if (!editingSponsorId && !logoFile) { alert('Selecione a logo do patrocinador.'); return; }
+
+  const btn = document.getElementById('btn-salvar-sponsor');
+  btn.disabled = true;
+  btn.textContent = editingSponsorId ? 'Salvando alterações...' : 'Salvando...';
 
   try {
-    await createSponsor({ nome, link, ordem, logoFile });
-    alert('Patrocinador salvo!');
-    document.getElementById('form-sponsor').reset();
-    document.getElementById('sponsor-preview').style.display = 'none';
+    if (editingSponsorId) {
+      await updateSponsor(editingSponsorId, { nome, link, ordem, logoFile });
+      alert('Patrocinador atualizado!');
+      cancelEditSponsorUI();
+    } else {
+      await createSponsor({ nome, link, ordem, logoFile });
+      alert('Patrocinador salvo!');
+      document.getElementById('form-sponsor').reset();
+      document.getElementById('sponsor-preview').style.display = 'none';
+    }
     renderAdminSponsorsList();
   } catch (e) {
     alert('Erro: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = editingSponsorId ? 'Salvar Alterações' : 'Salvar Patrocinador';
   }
+}
+
+function editSponsorUI(id, nome, link, ordem, logoUrl) {
+  editingSponsorId = id;
+  document.getElementById('sponsor-name').value = nome || '';
+  document.getElementById('sponsor-link').value = link || '';
+  document.getElementById('sponsor-order').value = ordem ?? 0;
+
+  const preview = document.getElementById('sponsor-preview');
+  if (logoUrl) {
+    preview.src = logoUrl;
+    preview.decoding = 'async';
+    preview.onerror = () => { preview.style.display = 'none'; };
+    preview.style.display = 'block';
+  } else {
+    preview.style.display = 'none';
+  }
+
+  document.getElementById('btn-salvar-sponsor').textContent = 'Salvar Alterações';
+  document.getElementById('btn-cancelar-edicao-sponsor').style.display = 'inline-block';
+  document.getElementById('form-sponsor').scrollIntoView({ behavior: 'smooth' });
+}
+
+function cancelEditSponsorUI() {
+  editingSponsorId = null;
+  document.getElementById('form-sponsor').reset();
+  document.getElementById('sponsor-preview').style.display = 'none';
+  document.getElementById('btn-salvar-sponsor').textContent = 'Salvar Patrocinador';
+  document.getElementById('btn-cancelar-edicao-sponsor').style.display = 'none';
 }
 
 async function renderAdminSponsorsList() {
@@ -1337,6 +1381,7 @@ async function renderAdminSponsorsList() {
           <b>${s.nome}</b>
           <p style="font-size:0.8rem; color:var(--text-muted);">${s.link || 'sem link'}</p>
         </div>
+        <button class="btn-secondary" onclick="editSponsorUI('${s.id}', '${(s.nome || '').replace(/'/g, "\\'")}', '${(s.link || '').replace(/'/g, "\\'")}', ${s.ordem || 0}, '${(s.logo_url || '').replace(/'/g, "\\'")}')">Editar</button>
         <button class="btn-secondary" onclick="toggleSponsorUI('${s.id}', ${!s.ativo})">${s.ativo ? 'Desativar' : 'Ativar'}</button>
         <button class="btn-remove" onclick="deleteSponsorUI('${s.id}')">✕</button>
       </div>
@@ -1359,6 +1404,7 @@ async function deleteSponsorUI(id) {
   if (!confirm('Excluir este patrocinador?')) return;
   try {
     await deleteSponsor(id);
+    if (editingSponsorId === id) cancelEditSponsorUI();
     renderAdminSponsorsList();
   } catch (e) {
     alert('Erro: ' + e.message);
@@ -1827,11 +1873,20 @@ async function renderEscalacaoTimes(tA, tB) {
       // um deles — força o uso da substituição pra colocar mais alguém.
       const desabilitarTitular = !ehTitular && titularesCount >= MAX_TITULARES_EM_CAMPO;
       const participou = participantes.has(j.id);
-      const label = ehTitular ? '' : (emCampo.has(j.id) ? ' <span style="color:var(--gold-bright); font-size:0.7rem;">(em campo, substituto)</span>' : '');
+      const emCampoAgora = emCampo.has(j.id);
+      // ehTitular reflete a escalação INICIAL fixa (quem começou o jogo),
+      // não quem está em campo agora — por isso o rótulo distingue os dois:
+      // titular que já saiu (banco) vs. não-titular que entrou (em campo).
+      let tag = '';
+      if (ehTitular && !emCampoAgora) {
+        tag = ' <span style="color:var(--text-muted); font-size:0.7rem;">(saiu, no banco)</span>';
+      } else if (!ehTitular && emCampoAgora) {
+        tag = ' <span style="color:var(--gold-bright); font-size:0.7rem;">(em campo, substituto)</span>';
+      }
       return `
         <div class="jogador-escalacao-linha" data-equipe-id="${t.id}" data-jogador-id="${j.id}" style="display:flex; align-items:center; gap:8px; padding:6px 0; border-top:1px solid var(--border-soft);">
-          <label style="display:flex; align-items:center; gap:4px; font-size:0.8rem; flex:1; ${desabilitarTitular ? 'opacity:0.45;' : ''}" title="${desabilitarTitular ? `Limite de ${MAX_TITULARES_EM_CAMPO} titulares atingido — use "Registrar substituição" pra colocar este jogador em campo.` : ''}">
-            <input type="checkbox" id="tit_${j.id}" ${ehTitular ? 'checked' : ''} ${desabilitarTitular ? 'disabled' : ''} onchange="atualizarContadorTitulares('${t.id}')"> ${j.numero ? '#' + j.numero + ' ' : ''}${j.nome}${label}
+          <label style="display:flex; align-items:center; gap:4px; font-size:0.8rem; flex:1; ${desabilitarTitular ? 'opacity:0.45;' : ''} ${ehTitular && !emCampoAgora ? 'text-decoration:line-through; text-decoration-color:var(--text-muted);' : ''}" title="${desabilitarTitular ? `Limite de ${MAX_TITULARES_EM_CAMPO} titulares atingido — use "Registrar substituição" pra colocar este jogador em campo.` : ''}">
+            <input type="checkbox" id="tit_${j.id}" ${ehTitular ? 'checked' : ''} ${desabilitarTitular ? 'disabled' : ''} onchange="atualizarContadorTitulares('${t.id}')"> ${j.numero ? '#' + j.numero + ' ' : ''}${j.nome}${tag}
           </label>
           <input type="number" id="nota_${j.id}" class="form-control" style="width:64px;" step="0.1" min="0" max="10" placeholder="Nota"
             value="${atual?.nota ?? ''}" ${(!partidaConcluida || !participou) ? 'disabled' : ''}
@@ -1864,7 +1919,7 @@ async function renderEscalacaoTimes(tA, tB) {
         <p style="font-weight:700; margin-bottom:8px;">${t.nome} <span class="contador-titulares-${t.id}" style="color:var(--text-muted); font-weight:400; font-size:0.78rem;">(${titularesCount}/${MAX_TITULARES_EM_CAMPO} titulares)</span></p>
         ${linhasJogadores}
         <div style="margin-top:10px; padding:8px; background:var(--surface-high); border-radius:8px;">
-          <p style="font-size:0.72rem; color:var(--text-muted); margin-bottom:6px;">🔁 Registrar substituição</p>
+          <p style="font-size:0.72rem; color:var(--text-muted); margin-bottom:6px;">🔁 Registrar substituição <span style="opacity:0.8;">— quem sai fica disponível pra voltar numa próxima substituição.</span></p>
           <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
             <select id="sub_sai_${t.id}" class="form-control" style="font-size:0.8rem;">${opcoesSai || '<option value="">Ninguém em campo</option>'}</select>
             <select id="sub_entra_${t.id}" class="form-control" style="font-size:0.8rem;">${opcoesEntra || '<option value="">Banco vazio</option>'}</select>
@@ -1879,10 +1934,45 @@ async function renderEscalacaoTimes(tA, tB) {
     `;
   };
 
-  container.innerHTML = blocoTime(tA) + blocoTime(tB) + `
+  // MVP da partida — qualquer participante (titular OU quem entrou por
+  // substituição) de QUALQUER um dos dois times pode ser escolhido. Não tem
+  // relação com a "Seleção da Rodada" — é só o destaque desse jogo específico.
+  const participantesOptions = [tA, tB].filter(Boolean).flatMap(t => {
+    const escalacaoDoTime = escalacaoAtual.filter(e => e.equipe_id === t.id);
+    const participantes = calcularParticipantes(t.id, escalacaoDoTime, eventosDaPartida);
+    return (t.jogadores || [])
+      .filter(j => participantes.has(j.id))
+      .map(j => `<option value="${j.id}" ${m?.mvp_jogador_id === j.id ? 'selected' : ''}>${j.numero ? '#' + j.numero + ' ' : ''}${j.nome} (${t.nome})</option>`);
+  }).join('');
+
+  const mvpBloco = `
+    <div class="card" style="margin-top:6px; margin-bottom:10px;">
+      <div class="card-title" style="margin-bottom:6px;">🏅 MVP da Partida</div>
+      <p style="font-size:0.72rem; color:var(--text-muted); margin-bottom:8px;">${!partidaConcluida ? 'Liberado só depois que a partida for concluída.' : 'Não precisa estar na Seleção da Rodada — é só quem se destacou nesse jogo específico.'}</p>
+      <select id="mvp-select" class="form-control" ${!partidaConcluida ? 'disabled' : ''}>
+        <option value="">— Nenhum —</option>
+        ${participantesOptions}
+      </select>
+      <button type="button" class="btn-secondary" style="width:100%; margin-top:8px;" ${!partidaConcluida ? 'disabled' : ''} onclick="salvarMvpUI()">💾 Salvar MVP</button>
+    </div>
+  `;
+
+  container.innerHTML = blocoTime(tA) + blocoTime(tB) + mvpBloco + `
     ${!partidaConcluida ? `<p style="color:var(--text-muted); font-size:0.78rem; margin-bottom:8px;">📌 As notas ficam liberadas depois que o placar da partida for salvo (status concluída), e só pra quem participou.</p>` : ''}
     <button class="btn-action" style="width:100%; margin-top:6px;" onclick="salvarEscalacaoCompleta()">💾 Salvar Escalação Completa</button>
   `;
+}
+
+async function salvarMvpUI() {
+  const jogadorId = document.getElementById('mvp-select').value;
+  try {
+    await salvarMvpPartida(sumulaMatchId, jogadorId || null);
+    const m = matches.find(x => x.id === sumulaMatchId);
+    if (m) m.mvp_jogador_id = jogadorId || null;
+    alert('MVP da partida salvo!');
+  } catch (e) {
+    alert('Erro ao salvar MVP: ' + e.message);
+  }
 }
 
 function atualizarContadorTitulares(equipeId) {
@@ -2029,8 +2119,8 @@ async function saveIdentidadeVisual() {
     const novo = {
       // Exibidos pequenos (44×44 na topbar, 92×36 no bloco do master) —
       // 200px dá folga suficiente pra retina sem pesar o carregamento.
-      logo_torneio: logoFile ? await uploadImageToImgbb(logoFile, { maxWidth: 200, maxHeight: 200 }) : atual.logo_torneio,
-      patrocinador_master_logo: masterFile ? await uploadImageToImgbb(masterFile, { maxWidth: 200, maxHeight: 200 }) : atual.patrocinador_master_logo,
+      logo_torneio: logoFile ? await uploadImageToSupabase(logoFile, { maxWidth: 200, maxHeight: 200 }) : atual.logo_torneio,
+      patrocinador_master_logo: masterFile ? await uploadImageToSupabase(masterFile, { maxWidth: 200, maxHeight: 200 }) : atual.patrocinador_master_logo,
       patrocinador_master_link: document.getElementById('identidade-master-link').value || null,
     };
 
