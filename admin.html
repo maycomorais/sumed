@@ -118,6 +118,16 @@
         <button class="btn-secondary" style="width:100%; margin-top:8px;" onclick="aplicarDataRodadaUI()">Aplicar a toda a Rodada</button>
       </div>
 
+      <div class="card" style="padding:12px; border-color: var(--gold);">
+        <p style="font-weight:700; font-size:0.85rem; margin-bottom:4px;">🔀 Trocar Equipe da Rodada</p>
+        <p style="font-size:0.75rem; color:var(--text-muted); margin-bottom:8px;">
+          Troca o calendário de duas equipes a partir desta rodada em diante (quem joga com quem). Rodadas já jogadas nunca são alteradas. O sistema bloqueia automaticamente qualquer troca que faria duas equipes se enfrentarem duas vezes na temporada.
+        </p>
+        <select id="troca-time-x" class="form-control" style="margin-bottom:6px;"></select>
+        <select id="troca-time-y" class="form-control"></select>
+        <button class="btn-secondary" style="width:100%; margin-top:8px; border-color:var(--gold); color:var(--gold);" onclick="trocarTimesUI()">Trocar</button>
+      </div>
+
       <div id="admin-matches-list"></div>
     </section>
 

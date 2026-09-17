@@ -9,7 +9,7 @@
 // ⚠️ Esta chave fica exposta no código do cliente por natureza do ImgBB
 // (não existe modo "server-only" nesse serviço). Se quiser trocar a
 // chave, é só substituir a constante abaixo.
-// const IMGBB_API_KEY = 'd6ade30e77d706a440f7c03f08af33c4';
+const IMGBB_API_KEY = 'd6ade30e77d706a440f7c03f08af33c4';
 
 /**
  * Redimensiona (mantendo proporção) e converte pra WebP numa ÚNICA passagem
@@ -57,52 +57,45 @@ function resizeAndConvertToWebP(file, { maxWidth = 600, maxHeight = 600, quality
   });
 }
 
-// ---------------------------------------------------------------------
-// UPLOAD DE IMAGEM — Supabase Storage
-// ---------------------------------------------------------------------
-// Bucket único 'midias', com pastas por tipo (escudos/jogadores/
-// patrocinadores/identidade). Sempre redimensiona + converte pra WebP
-// antes de subir, então os arquivos ficam pequenos e o carregamento do
-// app público é bem mais rápido do que com o ImgBB.
-const SUPABASE_STORAGE_BUCKET = 'midias';
-
 /**
- * Envia uma imagem para o Supabase Storage, redimensionando e convertendo
- * pra WebP antes. Retorna a URL pública.
+ * Envia uma imagem para o ImgBB — redimensiona e converte pra WebP antes,
+ * pra manter upload rápido e arquivos pequenos (o gargalo de carregamento
+ * do app era justamente subir/exibir fotos em resolução original).
  * @param {File} file
  * @param {Object} options
  * @param {number} options.maxWidth - padrão 600
  * @param {number} options.maxHeight - padrão 600
  * @param {number} options.quality - qualidade WebP 0-100, padrão 70
- * @param {string} options.folder - subpasta dentro do bucket (ex: 'escudos')
- * @returns {Promise<string>} URL pública no Supabase Storage
+ * @returns {Promise<string>} URL da imagem no ImgBB
  */
-async function uploadImageToSupabase(file, { maxWidth = 600, maxHeight = 600, quality = 70, folder = 'geral' } = {}) {
+async function uploadImageToImgbb(file, options = {}) {
+  const { maxWidth = 600, maxHeight = 600, quality = 70 } = options;
   const tiposPermitidos = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
   if (!tiposPermitidos.includes(file.type)) {
     throw new Error('Formato inválido. Use JPG, PNG, WEBP ou GIF.');
   }
   if (file.size > 10 * 1024 * 1024) {
-    throw new Error('Imagem muito grande. Máximo 10MB.');
+    throw new Error('Imagem muito grande. Máximo 10MB (limite do ImgBB).');
   }
 
   const webpBlob = await resizeAndConvertToWebP(file, { maxWidth, maxHeight, quality });
 
-  // Nome único com timestamp + sufixo aleatório — evita colisões e
-  // permite cache de 1 ano sem risco de servir arquivo velho.
-  const nomeArquivo = `${folder}/${Date.now()}_${Math.random().toString(36).slice(2, 10)}.webp`;
+  const formData = new FormData();
+  formData.append('key', IMGBB_API_KEY);
+  formData.append('image', webpBlob, 'image.webp');
+  formData.append('name', file.name.replace(/\.[^.]+$/, '.webp'));
 
-  const { error: uploadError } = await sb.storage
-    .from(SUPABASE_STORAGE_BUCKET)
-    .upload(nomeArquivo, webpBlob, {
-      contentType: 'image/webp',
-      cacheControl: '31536000', // 1 ano
-      upsert: false,
-    });
-  if (uploadError) throw uploadError;
+  const response = await fetch('https://api.imgbb.com/1/upload', {
+    method: 'POST',
+    body: formData,
+  });
 
-  const { data } = sb.storage.from(SUPABASE_STORAGE_BUCKET).getPublicUrl(nomeArquivo);
-  return data.publicUrl;
+  const data = await response.json();
+  if (!data.success) {
+    throw new Error(`ImgBB: ${data.error?.message || 'Erro desconhecido'}`);
+  }
+
+  return data.data.url;
 }
 
 // ---------------------------------------------------------------------
@@ -121,7 +114,7 @@ async function fetchTeams(categoria) {
 
 // escudoFile é opcional (File do <input type="file">)
 async function createTeam({ nome, presidente, capitao, comissao_tecnica, diretor_marketing, categoria, escudoFile, jogadores }) {
-  const escudo_url = escudoFile ? await uploadImageToSupabase(escudoFile, { maxWidth: 300, maxHeight: 300 }) : null;
+  const escudo_url = escudoFile ? await uploadImageToImgbb(escudoFile, { maxWidth: 300, maxHeight: 300 }) : null;
 
   const { data: equipe, error } = await sb
     .from('equipes')
@@ -148,7 +141,7 @@ async function createTeam({ nome, presidente, capitao, comissao_tecnica, diretor
 }
 
 async function addJogador(equipeId, { nome, numero, posicao, fotoFile, convidado }) {
-  const foto_url = fotoFile ? await uploadImageToSupabase(fotoFile, { maxWidth: 200, maxHeight: 200 }) : null;
+  const foto_url = fotoFile ? await uploadImageToImgbb(fotoFile, { maxWidth: 200, maxHeight: 200 }) : null;
 
   const { data: jogador, error } = await sb
     .from('jogadores')
@@ -433,7 +426,7 @@ async function fetchAllSponsors() {
 async function createSponsor({ nome, link, ordem, logoFile }) {
   // Exibido a no máximo 150×64px (card de patrocinador) — 300px dá margem
   // de sobra pra telas retina sem carregar um arquivo desnecessariamente grande.
-  const logo_url = await uploadImageToSupabase(logoFile, { maxWidth: 300, maxHeight: 300 });
+  const logo_url = await uploadImageToImgbb(logoFile, { maxWidth: 300, maxHeight: 300 });
 
   const { data: sponsor, error } = await sb
     .from('patrocinadores')
@@ -460,7 +453,7 @@ async function updateSponsor(id, { nome, link, ordem, logoFile }) {
   if (error) throw error;
 
   if (logoFile) {
-    const logo_url = await uploadImageToSupabase(logoFile, { maxWidth: 300, maxHeight: 300 });
+    const logo_url = await uploadImageToImgbb(logoFile, { maxWidth: 300, maxHeight: 300 });
     await sb.from('patrocinadores').update({ logo_url }).eq('id', id);
   }
 }
@@ -539,7 +532,7 @@ async function updateTeam(teamId, { nome, presidente, capitao, comissao_tecnica,
   if (error) throw error;
 
   if (escudoFile) {
-    const url = await uploadImageToSupabase(escudoFile, { maxWidth: 300, maxHeight: 300 });
+    const url = await uploadImageToImgbb(escudoFile, { maxWidth: 300, maxHeight: 300 });
     await sb.from('equipes').update({ escudo_url: url }).eq('id', teamId);
     return url;
   }
@@ -588,7 +581,7 @@ async function saveModalidade(categoria, { modalidade, titulares, reservas }) {
 }
 
 // ---------------------------------------------------------------------
-// ESCALAÇÃO (titular/reserva + nota)
+// ESCALAÇÃO (titular/reserva)
 // ---------------------------------------------------------------------
 async function fetchEscalacao(partidaId) {
   const { data, error } = await sb
@@ -599,13 +592,12 @@ async function fetchEscalacao(partidaId) {
   return data;
 }
 
-async function saveEscalacaoJogador(partidaId, equipeId, jogadorId, { titular, nota }) {
+async function saveEscalacaoJogador(partidaId, equipeId, jogadorId, { titular }) {
   const { error } = await sb.from('escalacoes').upsert({
     partida_id: partidaId,
     equipe_id: equipeId,
     jogador_id: jogadorId,
     titular,
-    nota: nota === '' || nota === null || nota === undefined ? null : Number(nota),
   }, { onConflict: 'partida_id,jogador_id' });
   if (error) throw error;
 }
@@ -675,31 +667,9 @@ async function deletePenaltiCobranca(id) {
 }
 
 // ---------------------------------------------------------------------
-// SELEÇÃO DA RODADA / PERNAS DE PAU (calculado a partir das notas)
+// EVENTOS DA CATEGORIA (usado no desempate de cartões da tabela e no
+// acumulado de disciplina)
 // ---------------------------------------------------------------------
-// Retorna todas as escalações com nota, de todas as partidas de uma
-// categoria, já com jogador/posição/equipe/rodada — a agregação por
-// rodada (melhor por posição, pior geral) é feita no cliente (index.js),
-// já que o volume de dados é pequeno o suficiente pra não precisar de
-// uma view SQL dedicada.
-async function fetchEscalacoesDaCategoria(categoria) {
-  const { data, error } = await sb
-    .from('escalacoes')
-    .select('*, jogadores(nome, posicao, foto_url, convidado), equipes(nome, categoria), partidas!inner(rodada, categoria, equipe_a, equipe_b, placar_a, placar_b)')
-    .not('nota', 'is', null)
-    .eq('partidas.categoria', categoria);
-  if (error) throw error;
-  return data;
-}
-
-async function fetchGolsDaCategoria(categoria) {
-  const { data, error } = await sb
-    .from('gols')
-    .select('jogador_id, assistencia_jogador_id, equipe_id, partida_id, partidas!inner(categoria)')
-    .eq('partidas.categoria', categoria);
-  if (error) throw error;
-  return data;
-}
 
 async function fetchEventosDaCategoria(categoria) {
   const { data, error } = await sb
@@ -720,7 +690,7 @@ async function updateJogador(jogadorId, { nome, numero, posicao, fotoFile, convi
   if (error) throw error;
 
   if (fotoFile) {
-    const url = await uploadImageToSupabase(fotoFile, { maxWidth: 200, maxHeight: 200 });
+    const url = await uploadImageToImgbb(fotoFile, { maxWidth: 200, maxHeight: 200 });
     await sb.from('jogadores').update({ foto_url: url }).eq('id', jogadorId);
   }
 }
@@ -865,23 +835,139 @@ async function bulkSetRoundInfo(categoria, rodada, { data, hora, local } = {}) {
 }
 
 // ---------------------------------------------------------------------
+// TROCA DE TIME A PARTIR DE UMA RODADA
+// ---------------------------------------------------------------------
+// Troca duas equipes de "caminho" dali em diante: a partir de `fromRound`,
+// a equipe X passa a seguir o calendário que era da equipe Y (joga contra
+// quem Y jogaria, rodada a rodada) e vice-versa. As rodadas ANTES de
+// fromRound nunca são tocadas — é história, fica como está.
+//
+// Isso é matematicamente mais seguro que só trocar o confronto de uma
+// rodada isolada: como é só relabeling de um calendário já válido (onde
+// cada par se enfrenta exatamente uma vez), nenhuma dupla-partida pode
+// surgir dali em diante — SALVO se uma das equipes já tiver enfrentado no
+// passado (antes de fromRound) o adversário que herdaria a partir de agora,
+// e é exatamente isso que a validação abaixo impede.
+
+// Monta o "caminho" de uma equipe: rodada -> adversário (ou 'BYE').
+function construirCaminhoEquipe(matches, teamId) {
+  const caminho = {};
+  matches.forEach(m => {
+    if (m.is_bye) {
+      if (m.equipe_a === teamId) caminho[m.rodada] = 'BYE';
+    } else if (m.equipe_a === teamId) {
+      caminho[m.rodada] = m.equipe_b;
+    } else if (m.equipe_b === teamId) {
+      caminho[m.rodada] = m.equipe_a;
+    }
+  });
+  return caminho;
+}
+
+// Confere se a troca é segura. Retorna { ok: true } ou { ok: false, motivo }.
+function validarTrocaDeTimes(matches, teamXId, teamYId, fromRound) {
+  if (teamXId === teamYId) return { ok: false, motivo: 'Escolha duas equipes diferentes.' };
+
+  const caminhoX = construirCaminhoEquipe(matches, teamXId);
+  const caminhoY = construirCaminhoEquipe(matches, teamYId);
+  const rodadas = [...new Set(matches.map(m => m.rodada))].filter(r => r >= fromRound);
+
+  for (const r of rodadas) {
+    const novoOpX = caminhoY[r]; // X herda o que era de Y nessa rodada
+    const novoOpY = caminhoX[r]; // Y herda o que era de X nessa rodada
+
+    if (novoOpX && novoOpX !== 'BYE' && novoOpX !== teamYId) {
+      const conflito = Object.entries(caminhoX).find(([rod, adv]) => Number(rod) < fromRound && adv === novoOpX);
+      if (conflito) {
+        return {
+          ok: false,
+          equipeId: teamXId,
+          equipeConflitanteId: novoOpX,
+          rodadaOriginal: Number(conflito[0]),
+          rodadaRepeticao: r,
+        };
+      }
+    }
+    if (novoOpY && novoOpY !== 'BYE' && novoOpY !== teamXId) {
+      const conflito = Object.entries(caminhoY).find(([rod, adv]) => Number(rod) < fromRound && adv === novoOpY);
+      if (conflito) {
+        return {
+          ok: false,
+          equipeId: teamYId,
+          equipeConflitanteId: novoOpY,
+          rodadaOriginal: Number(conflito[0]),
+          rodadaRepeticao: r,
+        };
+      }
+    }
+  }
+
+  return { ok: true };
+}
+
+// Busca o calendário atual, valida e — se estiver tudo certo — grava a
+// troca no banco (um update por partida afetada). Lança erro com uma
+// mensagem clara se a troca violar a regra de "não repetir confronto", ou
+// se alguma das rodadas afetadas já tiver resultado lançado (não dá pra
+// reescrever uma partida que já aconteceu de verdade).
+async function trocarTimesAPartirDaRodada(categoria, teamXId, teamYId, fromRound) {
+  const matches = await fetchMatches(categoria);
+
+  const rodadasAfetadas = matches.filter(m => m.rodada >= fromRound);
+  const partidaJaJogada = rodadasAfetadas.find(m => !m.is_bye && (m.status === 'FINISHED' || m.placar_travado));
+  if (partidaJaJogada) {
+    throw new Error(`A Rodada ${partidaJaJogada.rodada} já tem resultado lançado — não é possível trocar equipes a partir de uma rodada que já aconteceu.`);
+  }
+
+  const validacao = validarTrocaDeTimes(matches, teamXId, teamYId, fromRound);
+  if (!validacao.ok) {
+    // Sem nomes de equipe aqui de propósito (data.js não conhece a lista de
+    // equipes) — a UI (admin.js) intercepta esse erro e monta uma mensagem
+    // com os nomes reais a partir de `validacao`, anexada em e.conflito.
+    const err = new Error(validacao.motivo || 'Essa troca faria duas equipes se enfrentarem duas vezes na temporada.');
+    err.conflito = validacao;
+    throw err;
+  }
+
+  const rodadas = [...new Set(matches.map(m => m.rodada))].filter(r => r >= fromRound);
+  const atualizacoes = [];
+
+  rodadas.forEach(r => {
+    const rowX = matches.find(m => m.rodada === r && (m.equipe_a === teamXId || m.equipe_b === teamXId));
+    const rowY = matches.find(m => m.rodada === r && (m.equipe_a === teamYId || m.equipe_b === teamYId));
+    if (!rowX || !rowY || rowX.id === rowY.id) return; // jogam entre si nessa rodada -> nada muda
+
+    const novoX = { ...rowX };
+    if (novoX.equipe_a === teamXId) novoX.equipe_a = teamYId; else novoX.equipe_b = teamYId;
+    atualizacoes.push({ id: rowX.id, equipe_a: novoX.equipe_a, equipe_b: novoX.equipe_b });
+
+    const novoY = { ...rowY };
+    if (novoY.equipe_a === teamYId) novoY.equipe_a = teamXId; else novoY.equipe_b = teamXId;
+    atualizacoes.push({ id: rowY.id, equipe_a: novoY.equipe_a, equipe_b: novoY.equipe_b });
+  });
+
+  for (const upd of atualizacoes) {
+    const { error } = await sb.from('partidas').update({ equipe_a: upd.equipe_a, equipe_b: upd.equipe_b }).eq('id', upd.id);
+    if (error) throw error;
+  }
+
+  return { rodadasAlteradas: atualizacoes.length / 2 };
+}
+
+// ---------------------------------------------------------------------
 // ESTATÍSTICAS DE UM JOGADOR (modal de perfil)
 // ---------------------------------------------------------------------
 async function fetchJogadorStats(jogadorId) {
-  const [golsRes, assistRes, eventosRes, escalacaoRes] = await Promise.all([
+  const [golsRes, assistRes, eventosRes] = await Promise.all([
     sb.from('gols').select('id', { count: 'exact', head: true }).eq('jogador_id', jogadorId),
     sb.from('gols').select('id', { count: 'exact', head: true }).eq('assistencia_jogador_id', jogadorId),
     sb.from('eventos_disciplinares').select('tipo').eq('jogador_id', jogadorId),
-    sb.from('escalacoes').select('nota').eq('jogador_id', jogadorId).not('nota', 'is', null),
   ]);
   if (golsRes.error) throw golsRes.error;
   if (assistRes.error) throw assistRes.error;
   if (eventosRes.error) throw eventosRes.error;
-  if (escalacaoRes.error) throw escalacaoRes.error;
 
   const eventos = eventosRes.data || [];
-  const notas = (escalacaoRes.data || []).map(e => Number(e.nota));
-  const mediaNota = notas.length ? notas.reduce((a, b) => a + b, 0) / notas.length : null;
 
   return {
     gols: golsRes.count || 0,
@@ -889,7 +975,5 @@ async function fetchJogadorStats(jogadorId) {
     cartaoAmarelo: eventos.filter(e => e.tipo === 'cartao_amarelo').length,
     cartaoVermelho: eventos.filter(e => e.tipo === 'cartao_vermelho').length,
     lesoes: eventos.filter(e => e.tipo === 'contusao').length,
-    mediaNota,
-    jogosAvaliados: notas.length,
   };
 }

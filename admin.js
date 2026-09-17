@@ -765,6 +765,7 @@ async function registrarWOUI(matchId, equipeResponsavelId) {
 
 function renderAdminRound() {
   document.getElementById('admin-round-title').innerText = `Rodada ${adminRound}`;
+  renderTrocaTimesSelects();
   const container = document.getElementById('admin-matches-list');
   const roundMatches = matches.filter(m => m.rodada === adminRound);
 
@@ -872,6 +873,64 @@ async function aplicarDataRodadaUI() {
     await loadAdminRound();
   } catch (e) {
     alert('Erro: ' + e.message);
+  }
+}
+
+// Popula os dois selects de "Trocar Equipe" com todas as equipes que
+// aparecem nesta rodada (jogando ou de folga), mostrando o adversário atual
+// pra facilitar a escolha.
+function renderTrocaTimesSelects() {
+  const selectX = document.getElementById('troca-time-x');
+  const selectY = document.getElementById('troca-time-y');
+  if (!selectX || !selectY) return;
+
+  const roundMatches = matches.filter(m => m.rodada === adminRound);
+  const opcoes = roundMatches.map(m => {
+    const nomeA = teams.find(t => t.id === m.equipe_a)?.nome || '?';
+    if (m.is_bye) {
+      return { id: m.equipe_a, label: `${nomeA} (FOLGA)` };
+    }
+    const nomeB = teams.find(t => t.id === m.equipe_b)?.nome || '?';
+    return [
+      { id: m.equipe_a, label: `${nomeA} (vs ${nomeB})` },
+      { id: m.equipe_b, label: `${nomeB} (vs ${nomeA})` },
+    ];
+  }).flat();
+
+  const html = opcoes.length
+    ? opcoes.map(o => `<option value="${o.id}">${o.label}</option>`).join('')
+    : '<option value="">Nenhuma equipe nesta rodada</option>';
+  selectX.innerHTML = html;
+  selectY.innerHTML = html;
+  // Por padrão já deixa selecionadas duas equipes diferentes, se possível.
+  if (opcoes.length > 1) selectY.selectedIndex = 1;
+}
+
+async function trocarTimesUI() {
+  const teamXId = document.getElementById('troca-time-x').value;
+  const teamYId = document.getElementById('troca-time-y').value;
+  if (!teamXId || !teamYId) { alert('Selecione as duas equipes.'); return; }
+  if (teamXId === teamYId) { alert('Escolha duas equipes diferentes.'); return; }
+
+  const nomeX = teams.find(t => t.id === teamXId)?.nome || '?';
+  const nomeY = teams.find(t => t.id === teamYId)?.nome || '?';
+  if (!confirm(`Trocar ${nomeX} ↔ ${nomeY} a partir da Rodada ${adminRound}?\n\nIsso troca quem cada uma enfrenta em TODAS as rodadas de agora em diante (rodadas já jogadas não mudam). Se a troca fizer duas equipes se enfrentarem duas vezes na temporada, será bloqueada automaticamente.`)) return;
+
+  try {
+    const resultado = await trocarTimesAPartirDaRodada(adminCategoria, teamXId, teamYId, adminRound);
+    alert(`Troca aplicada! ${resultado.rodadasAlteradas} rodada(s) atualizada(s).`);
+    await loadAdminRound();
+  } catch (e) {
+    if (e.conflito && e.conflito.equipeId) {
+      const nomeEquipe = teams.find(t => t.id === e.conflito.equipeId)?.nome || 'Uma equipe';
+      const nomeConflitante = teams.find(t => t.id === e.conflito.equipeConflitanteId)?.nome || 'outra equipe';
+      alert(
+        `Não foi possível trocar: ${nomeEquipe} já enfrentou ${nomeConflitante} na Rodada ${e.conflito.rodadaOriginal} — `
+        + `essa troca faria os dois se enfrentarem de novo na Rodada ${e.conflito.rodadaRepeticao}.`
+      );
+    } else {
+      alert('Não foi possível trocar: ' + e.message);
+    }
   }
 }
 
@@ -1844,7 +1903,7 @@ function calcularEmCampo(equipeId, escalacaoDoTime, eventosDaPartida) {
 }
 
 // Todo mundo que participou em algum momento (titular OU entrou por
-// substituição) — só esses podem receber nota.
+// substituição) — usado pra montar as opções de MVP.
 function calcularParticipantes(equipeId, escalacaoDoTime, eventosDaPartida) {
   const participantes = new Set(escalacaoDoTime.filter(e => e.titular).map(e => e.jogador_id));
   substituicoesDoTime(equipeId, eventosDaPartida).forEach(s => participantes.add(s.entrouId));
@@ -1873,7 +1932,6 @@ async function renderEscalacaoTimes(tA, tB) {
     const escalacaoDoTime = escalacaoAtual.filter(e => e.equipe_id === t.id);
     const titularesCount = escalacaoDoTime.filter(e => e.titular).length;
     const emCampo = calcularEmCampo(t.id, escalacaoDoTime, eventosDaPartida);
-    const participantes = calcularParticipantes(t.id, escalacaoDoTime, eventosDaPartida);
     const subs = substituicoesDoTime(t.id, eventosDaPartida);
 
     const linhasJogadores = jogadores.map(j => {
@@ -1882,7 +1940,6 @@ async function renderEscalacaoTimes(tA, tB) {
       // Trava a caixa de titular quando já tem 5 marcados e esta linha não é
       // um deles — força o uso da substituição pra colocar mais alguém.
       const desabilitarTitular = !ehTitular && titularesCount >= MAX_TITULARES_EM_CAMPO;
-      const participou = participantes.has(j.id);
       const emCampoAgora = emCampo.has(j.id);
       // ehTitular reflete a escalação INICIAL fixa (quem começou o jogo),
       // não quem está em campo agora — por isso o rótulo distingue os dois:
@@ -1898,9 +1955,6 @@ async function renderEscalacaoTimes(tA, tB) {
           <label style="display:flex; align-items:center; gap:4px; font-size:0.8rem; flex:1; ${desabilitarTitular ? 'opacity:0.45;' : ''} ${ehTitular && !emCampoAgora ? 'text-decoration:line-through; text-decoration-color:var(--text-muted);' : ''}" title="${desabilitarTitular ? `Limite de ${MAX_TITULARES_EM_CAMPO} titulares atingido — use "Registrar substituição" pra colocar este jogador em campo.` : ''}">
             <input type="checkbox" id="tit_${j.id}" ${ehTitular ? 'checked' : ''} ${desabilitarTitular ? 'disabled' : ''} onchange="atualizarContadorTitulares('${t.id}')"> ${j.numero ? '#' + j.numero + ' ' : ''}${j.nome}${tag}
           </label>
-          <input type="number" id="nota_${j.id}" class="form-control" style="width:64px;" step="0.1" min="0" max="10" placeholder="Nota"
-            value="${atual?.nota ?? ''}" ${(!partidaConcluida || !participou) ? 'disabled' : ''}
-            title="${!partidaConcluida ? 'Nota liberada só depois que a partida for concluída.' : (!participou ? 'Este jogador não participou da partida.' : '')}">
         </div>
       `;
     }).join('') || '<p style="color:var(--text-muted); font-size:0.8rem;">Sem jogadores cadastrados.</p>';
@@ -1968,7 +2022,6 @@ async function renderEscalacaoTimes(tA, tB) {
   `;
 
   container.innerHTML = blocoTime(tA) + blocoTime(tB) + mvpBloco + `
-    ${!partidaConcluida ? `<p style="color:var(--text-muted); font-size:0.78rem; margin-bottom:8px;">📌 As notas ficam liberadas depois que o placar da partida for salvo (status concluída), e só pra quem participou.</p>` : ''}
     <button class="btn-action" style="width:100%; margin-top:6px;" onclick="salvarEscalacaoCompleta()">💾 Salvar Escalação Completa</button>
   `;
 }
@@ -2058,28 +2111,13 @@ async function salvarEscalacaoCompleta() {
   if (!linhas.length) { alert('Nenhum jogador para salvar.'); return; }
 
   const m = matches.find(x => x.id === sumulaMatchId);
-  const partidaConcluida = m?.status === 'FINISHED';
 
   try {
-    // Recalcula participantes por equipe pra não gravar nota de quem não jogou,
-    // mesmo que o campo de nota tenha ficado com algum valor residual.
-    const eventosDaPartida = await fetchEventos({ partidaId: sumulaMatchId });
-    const cacheParticipantes = {};
-
     await Promise.all(Array.from(linhas).map(l => {
       const jogadorId = l.dataset.jogadorId;
       const equipeId = l.dataset.equipeId;
       const titular = document.getElementById(`tit_${jogadorId}`).checked;
-
-      if (!cacheParticipantes[equipeId]) {
-        const escalacaoDoTime = Array.from(document.querySelectorAll(`.jogador-escalacao-linha[data-equipe-id="${equipeId}"]`))
-          .map(el => ({ jogador_id: el.dataset.jogadorId, titular: document.getElementById(`tit_${el.dataset.jogadorId}`).checked }));
-        cacheParticipantes[equipeId] = calcularParticipantes(equipeId, escalacaoDoTime, eventosDaPartida);
-      }
-      const participou = cacheParticipantes[equipeId].has(jogadorId);
-      const nota = (partidaConcluida && participou) ? document.getElementById(`nota_${jogadorId}`).value : '';
-
-      return saveEscalacaoJogador(sumulaMatchId, equipeId, jogadorId, { titular, nota });
+      return saveEscalacaoJogador(sumulaMatchId, equipeId, jogadorId, { titular });
     }));
 
     alert('Escalação completa salva!');
