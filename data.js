@@ -335,18 +335,6 @@ function gerarCalendarioComRestricoes(teamIds, categoria, { folgaRodada1Id, pare
 }
 
 async function saveMatchScore(matchId, scoreA, scoreB) {
-  // Mesma trava do setMatchLive: se a partida já está com placar_travado,
-  // não deixamos essa função reabrir o status (ex: limpar o placar voltaria
-  // pra SCHEDULED). A UI já desabilita os campos quando travado, mas
-  // garantimos aqui também, pra não depender só do front-end.
-  const { data: atual, error: fetchError } = await sb
-    .from('partidas')
-    .select('placar_travado')
-    .eq('id', matchId)
-    .single();
-  if (fetchError) throw fetchError;
-  if (atual?.placar_travado) return; // nada a fazer — placar travado, ignora silenciosamente
-
   const payload = scoreA === '' || scoreB === ''
     ? { placar_a: null, placar_b: null, status: 'SCHEDULED' }
     : { placar_a: parseInt(scoreA), placar_b: parseInt(scoreB), status: 'FINISHED' };

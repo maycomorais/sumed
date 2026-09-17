@@ -782,17 +782,21 @@ function renderAdminRound() {
     const tA = teams.find(x => x.id === m.equipe_a)?.nome || '?';
     const tB = teams.find(x => x.id === m.equipe_b)?.nome || '?';
     const travado = !!m.placar_travado;
+    const podeDestravar = currentUser?.profile?.role === ROLES.ADMIN_MASTER;
+    const editavel = !travado || podeDestravar;
     const woResponsavel = parseWOResponsavel(m);
 
     return `
       <div class="card" style="${travado ? 'border-color: var(--gold);' : ''}">
-        ${travado ? `<p style="color:var(--gold); font-size:0.72rem; font-weight:700; margin-bottom:8px;">🔒 PARTIDA ENCERRADA — placar travado</p>` : ''}
+        ${travado ? `<p style="color:var(--gold); font-size:0.72rem; font-weight:700; margin-bottom:8px;">
+          🔒 PARTIDA ENCERRADA ${podeDestravar ? '— como AdminMaster, você pode editar o placar mesmo travado' : '— placar travado'}
+        </p>` : ''}
         ${woResponsavel ? `<p style="color:var(--danger-strong); font-size:0.72rem; font-weight:700; margin-bottom:8px;">⚠️ Encerrada por W.O. — responsável: ${teams.find(t => t.id === woResponsavel)?.nome || 'equipe removida'}</p>` : ''}
         <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:12px;">
           <span style="font-weight:700; font-size:0.9rem;">${tA}</span>
-          <input type="number" id="scA_${m.id}" value="${m.placar_a ?? ''}" class="form-control" style="width:54px; text-align:center; flex-shrink:0;" ${travado ? 'disabled' : ''}>
+          <input type="number" id="scA_${m.id}" value="${m.placar_a ?? ''}" class="form-control" style="width:54px; text-align:center; flex-shrink:0;" ${editavel ? '' : 'disabled'}>
           <span style="color:var(--text-muted);">×</span>
-          <input type="number" id="scB_${m.id}" value="${m.placar_b ?? ''}" class="form-control" style="width:54px; text-align:center; flex-shrink:0;" ${travado ? 'disabled' : ''}>
+          <input type="number" id="scB_${m.id}" value="${m.placar_b ?? ''}" class="form-control" style="width:54px; text-align:center; flex-shrink:0;" ${editavel ? '' : 'disabled'}>
           <span style="font-weight:700; font-size:0.9rem; text-align:right;">${tB}</span>
         </div>
         <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
