@@ -161,11 +161,11 @@ async function deleteJogador(jogadorId) {
 // PARTIDAS
 // ---------------------------------------------------------------------
 async function fetchMatches(categoria) {
-  let query = sb.from('partidas').select('*').order('rodada');
+  let query = sb.from('partidas').select('*');
   if (categoria) query = query.eq('categoria', categoria);
   const { data, error } = await query;
   if (error) throw error;
-  return data;
+  return ordenarPartidasPorRodada(data);
 }
 
 // Algoritmo Round-Robin (Berger) — igual ao anterior, agora grava no Supabase.
@@ -332,6 +332,33 @@ function gerarCalendarioComRestricoes(teamIds, categoria, { folgaRodada1Id, pare
   }
 
   throw new Error('Não foi possível gerar um calendário respeitando todos os pares restritos configurados. Remova algum par ou tente novamente.');
+}
+
+// Ordena as partidas dentro de cada rodada pela data/hora agendada,
+// deixando por último as que ainda não têm data ou hora definida.
+// Usada tanto no painel admin quanto no app público, pra que os cards
+// se movam automaticamente assim que o admin preenche a data/hora.
+function ordenarPartidasPorRodada(partidas) {
+  const pesoData = (m) => {
+    if (!m.data) return 2;            // sem data -> sempre por último
+    return m.hora ? 0 : 1;            // com data+hora -> primeiro; só data -> meio
+  };
+  const timestamp = (m) => {
+    if (!m.data) return Infinity;
+    const hora = m.hora || '23:59:59';
+    return new Date(`${m.data}T${hora}`).getTime();
+  };
+
+  return [...partidas].sort((a, b) => {
+    if (a.rodada !== b.rodada) return a.rodada - b.rodada;
+    const pa = pesoData(a), pb = pesoData(b);
+    if (pa !== pb) return pa - pb;
+    const ta = timestamp(a), tb = timestamp(b);
+    if (ta !== tb) return ta - tb;
+    // Empate total (mesma data/hora ou ambos sem data): desempata por id,
+    // que segue o padrão m_{categoria}_{rodada}_{indice} do sorteio.
+    return (a.id || '').localeCompare(b.id || '');
+  });
 }
 
 async function saveMatchScore(matchId, scoreA, scoreB) {
