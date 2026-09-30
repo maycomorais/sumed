@@ -10,7 +10,6 @@ let teams = [];
 let matches = [];
 let jogadoresPendentes = []; // linhas do formulário "Nova Equipe" ainda não salvas
 let minJogadoresExigidos = 11; // atualizado a partir do "Formato do Campeonato" da categoria
-const MAX_JOGADORES_POR_EQUIPE = 10; // limite fixo de elenco, independente do "Formato do Campeonato"
 
 // Retorna o número de camisa duplicado (como string) se houver colisão
 // entre os jogadores informados, ignorando linhas sem número preenchido e,
@@ -69,7 +68,7 @@ const ROLE_LABELS = {
 const ADMIN_NAV_MAP = {
   sorteio: 'sorteio', placar: 'placar', equipes: 'equipes', disciplina: 'disciplina',
   mais: 'mais', patrocinadores: 'mais', usuarios: 'mais', formato: 'mais', identidade: 'mais',
-  'sumula-admin': 'placar',
+  senha: 'mais', 'sumula-admin': 'placar',
 };
 
 let sumulaMatchId = null;
@@ -990,10 +989,6 @@ async function saveFormato(e) {
 // EQUIPES + JOGADORES (formulário dinâmico)
 // ---------------------------------------------------------------------
 function addJogadorRow() {
-  if (jogadoresPendentes.length >= MAX_JOGADORES_POR_EQUIPE) {
-    alert(`O elenco pode ter no máximo ${MAX_JOGADORES_POR_EQUIPE} atletas.`);
-    return;
-  }
   const id = 'jr_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
   jogadoresPendentes.push({ rowId: id, nome: '', numero: '', posicao: '', fotoFile: null, convidado: false });
 
@@ -1058,10 +1053,6 @@ async function saveTeam(e) {
     const jogadoresValidosCheck = jogadoresPendentes.filter(j => j.nome && j.nome.trim());
     if (jogadoresValidosCheck.length < minJogadoresExigidos) {
       alert(`Faltam jogadores: cadastre pelo menos ${minJogadoresExigidos} (formato configurado em "Formato do Campeonato") antes de salvar a equipe. Você preencheu ${jogadoresValidosCheck.length}.`);
-      return;
-    }
-    if (jogadoresValidosCheck.length > MAX_JOGADORES_POR_EQUIPE) {
-      alert(`O elenco pode ter no máximo ${MAX_JOGADORES_POR_EQUIPE} atletas. Você preencheu ${jogadoresValidosCheck.length} — remova ${jogadoresValidosCheck.length - MAX_JOGADORES_POR_EQUIPE} linha(s) antes de salvar.`);
       return;
     }
     const numeroDup = numeroDuplicadoEntre(jogadoresValidosCheck);
@@ -1295,11 +1286,6 @@ async function adicionarNovoJogadorElenco() {
   const fotoFile = elencoFotoPendente['novo'] || null;
 
   if (!nome.trim()) { alert('Informe o nome do jogador.'); return; }
-  const t = teams.find(x => x.id === editingTeamId);
-  if ((t?.jogadores || []).length >= MAX_JOGADORES_POR_EQUIPE) {
-    alert(`Este elenco já tem ${MAX_JOGADORES_POR_EQUIPE} atletas, o máximo permitido. Remova alguém antes de adicionar um novo.`);
-    return;
-  }
   if (numeroJaUsadoNoElenco(editingTeamId, numero, null)) {
     alert(`Já existe um atleta desta equipe usando a camisa nº ${numero}. Escolha um número diferente.`);
     return;
@@ -1531,6 +1517,64 @@ async function deleteUserUI(userId) {
     renderAdminUsersList();
   } catch (e) {
     alert('Erro: ' + e.message);
+  }
+}
+
+// ---------------------------------------------------------------------
+// TROCAR PRÓPRIA SENHA (qualquer usuário logado)
+// ---------------------------------------------------------------------
+// Reautentica com a senha atual antes de trocar — sem isso, qualquer um
+// que pegasse o celular desbloqueado (ou um token roubado) conseguiria
+// trocar a senha sem saber a antiga. O próprio Supabase Auth cuida do
+// hash/segurança; aqui só fazemos a dupla checagem.
+async function saveSenha(e) {
+  e.preventDefault();
+
+  const atual = document.getElementById('senha-atual').value;
+  const nova = document.getElementById('senha-nova').value;
+  const confirma = document.getElementById('senha-confirma').value;
+
+  if (nova !== confirma) {
+    alert('A nova senha e a confirmação não coincidem.');
+    return;
+  }
+  if (nova.length < 6) {
+    alert('A nova senha deve ter pelo menos 6 caracteres.');
+    return;
+  }
+  if (nova === atual) {
+    alert('A nova senha precisa ser diferente da atual.');
+    return;
+  }
+  if (!currentUser?.profile?.email) {
+    alert('Não foi possível identificar seu e-mail. Faça login novamente.');
+    return;
+  }
+
+  const form = document.getElementById('form-senha');
+  const btn = form.querySelector('button[type="submit"]');
+  btn.disabled = true;
+  btn.textContent = 'Salvando...';
+
+  try {
+    // 1) Confirma que o dono da conta sabe a senha atual.
+    const { error: reauthError } = await sb.auth.signInWithPassword({
+      email: currentUser.profile.email,
+      password: atual,
+    });
+    if (reauthError) throw new Error('Senha atual incorreta.');
+
+    // 2) Troca de fato.
+    const { error: updateError } = await sb.auth.updateUser({ password: nova });
+    if (updateError) throw updateError;
+
+    alert('Senha alterada com sucesso! Use a nova senha no próximo login.');
+    form.reset();
+  } catch (err) {
+    alert('Erro ao trocar senha: ' + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Salvar Nova Senha';
   }
 }
 
