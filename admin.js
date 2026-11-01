@@ -68,7 +68,7 @@ const ROLE_LABELS = {
 const ADMIN_NAV_MAP = {
   sorteio: 'sorteio', placar: 'placar', equipes: 'equipes', disciplina: 'disciplina',
   mais: 'mais', patrocinadores: 'mais', usuarios: 'mais', formato: 'mais', identidade: 'mais',
-  senha: 'mais', 'sumula-admin': 'placar',
+  senha: 'mais', 'sumula-admin': 'placar', 'mata-mata': 'mais',
 };
 
 let sumulaMatchId = null;
@@ -89,6 +89,7 @@ function switchAdminScreen(screenId) {
   if (screenId === 'disciplina') initDisciplinaTab();
   if (screenId === 'formato') initFormatoTab();
   if (screenId === 'identidade') initIdentidadeTab();
+  if (screenId === 'mata-mata') initMataMataTab();
 
   window.scrollTo(0, 0);
 }
@@ -1592,7 +1593,9 @@ const TIPO_EVENTO_LABEL = {
 
 async function initDisciplinaTab() {
   teams = await fetchTeams(adminCategoria);
-  matches = await fetchMatches(adminCategoria);
+  const gMatches = await fetchMatches(adminCategoria);
+  const eMatches = await fetchEliminatorias(adminCategoria);
+  matches = [...gMatches, ...eMatches];
 
   const equipeSelect = document.getElementById('evento-equipe');
   equipeSelect.innerHTML = teams.map(t => `<option value="${t.id}">${t.nome}</option>`).join('');
@@ -1602,7 +1605,8 @@ async function initDisciplinaTab() {
   const opcoesPartidas = matches.filter(m => !m.is_bye).map(m => {
     const tA = teams.find(t => t.id === m.equipe_a)?.nome || '?';
     const tB = teams.find(t => t.id === m.equipe_b)?.nome || '?';
-    return `<option value="${m.id}">Rodada ${m.rodada} — ${tA} × ${tB}</option>`;
+    const desc = m.fase_eliminatoria ? `[${m.fase_eliminatoria.toUpperCase()} - ${m.etapa_eliminatoria.toUpperCase()}]` : `Rodada ${m.rodada}`;
+    return `<option value="${m.id}">${desc} — ${tA} × ${tB}</option>`;
   }).join('');
   partidaSelect.innerHTML = '<option value="">— Não vinculada a uma partida —</option>' + opcoesPartidas;
 
@@ -1723,14 +1727,56 @@ async function deleteEventoUI(id) {
 // ---------------------------------------------------------------------
 async function openSumulaAdmin(matchId) {
   sumulaMatchId = matchId;
-  const m = matches.find(x => x.id === matchId);
+  
+  // Procura a partida. Se não achar no array de grupos, busca nas eliminatórias.
+  let m = matches.find(x => x.id === matchId);
+  if (!m) {
+    const elMatches = await fetchEliminatorias(adminCategoria);
+    m = elMatches.find(x => x.id === matchId);
+  }
   if (!m) return;
+  
+  currentSumulaMatch = m;
 
   const tA = teams.find(t => t.id === m.equipe_a);
   const tB = teams.find(t => t.id === m.equipe_b);
   document.getElementById('sumula-admin-title').innerText = `${tA?.nome || '?'} × ${tB?.nome || '?'}`;
-  document.getElementById('chk-prorrogacao').checked = !!m.teve_prorrogacao;
-  document.getElementById('chk-penaltis').checked = !!m.teve_penaltis;
+  
+  const isElim = !!m.fase_eliminatoria;
+  
+  // Mostra/Oculta blocos específicos de mata-mata
+  document.getElementById('card-resultado-elim').style.display = isElim ? 'block' : 'none';
+  document.getElementById('card-prorrogacao-penaltis').style.display = 'block'; // Sempre exibe, mas controla os checkboxes
+  
+  if (isElim) {
+    document.getElementById('elim-placar-a').value = m.placar_a ?? '';
+    document.getElementById('elim-placar-b').value = m.placar_b ?? '';
+    document.getElementById('elim-pro-a').value = m.placar_prorrogacao_a ?? '';
+    document.getElementById('elim-pro-b').value = m.placar_prorrogacao_b ?? '';
+    document.getElementById('elim-pen-a').value = m.placar_penaltis_a ?? '';
+    document.getElementById('elim-pen-b').value = m.placar_penaltis_b ?? '';
+    
+    const vId = m.vencedor_id;
+    const msg = document.getElementById('elim-vencedor-msg');
+    if (vId) {
+      const vTeam = teams.find(t => t.id === vId);
+      msg.innerText = `🏆 Vencedor: ${vTeam?.nome}`;
+      msg.style.display = 'block';
+    } else {
+      msg.style.display = 'none';
+    }
+    
+    // Esconde os checkboxes no mata-mata (os placares de PRO/PEN já definem)
+    document.getElementById('chk-prorrogacao').parentElement.style.display = 'none';
+    document.getElementById('chk-penaltis').parentElement.style.display = 'none';
+  } else {
+    // Comportamento padrão para fase de grupos
+    document.getElementById('chk-prorrogacao').checked = !!m.teve_prorrogacao;
+    document.getElementById('chk-penaltis').checked = !!m.teve_penaltis;
+    document.getElementById('chk-prorrogacao').parentElement.style.display = 'flex';
+    document.getElementById('chk-penaltis').parentElement.style.display = 'flex';
+  }
+
   document.getElementById('wrap-penaltis').style.display = m.teve_penaltis ? 'block' : 'none';
 
   const travadaSumula = !!m.placar_travado;
@@ -1744,7 +1790,6 @@ async function openSumulaAdmin(matchId) {
   document.getElementById('live-score-b').innerText = m.placar_b ?? 0;
   document.getElementById('link-transmissao').value = m.link_transmissao || '';
 
-  // Selects de equipe (gols, pênaltis)
   const equipeOptions = `<option value="${tA?.id}">${tA?.nome}</option><option value="${tB?.id}">${tB?.nome}</option>`;
   document.getElementById('gol-equipe').innerHTML = equipeOptions;
   document.getElementById('pen-equipe').innerHTML = equipeOptions;
@@ -1785,9 +1830,8 @@ function populateJogadoresDoSelect(selectEquipeId, selectJogadorId) {
 }
 
 async function toggleAoVivoUI(checked) {
-  const mAtual = matches.find(x => x.id === sumulaMatchId);
+  const mAtual = currentSumulaMatch;
   if (mAtual?.placar_travado) {
-    // Segunda trava, além do checkbox já vir desabilitado nesse caso.
     document.getElementById('chk-ao-vivo').checked = false;
     alert('Esta partida já foi encerrada e o placar está travado — não é possível reabri-la.');
     return;
@@ -1795,8 +1839,9 @@ async function toggleAoVivoUI(checked) {
   try {
     await setMatchLive(sumulaMatchId, checked);
     document.getElementById('wrap-placar-ao-vivo').style.display = checked ? 'block' : 'none';
-    const m = matches.find(x => x.id === sumulaMatchId);
-    if (m) m.status = checked ? 'LIVE' : 'SCHEDULED';
+    if (currentSumulaMatch) currentSumulaMatch.status = checked ? 'LIVE' : 'SCHEDULED';
+    const idx = matches.findIndex(x => x.id === sumulaMatchId);
+    if (idx >= 0) matches[idx].status = checked ? 'LIVE' : 'SCHEDULED';
   } catch (e) {
     document.getElementById('chk-ao-vivo').checked = !checked;
     alert('Erro: ' + e.message);
@@ -2078,8 +2123,9 @@ async function salvarMvpUI() {
   const jogadorId = document.getElementById('mvp-select').value;
   try {
     await salvarMvpPartida(sumulaMatchId, jogadorId || null);
-    const m = matches.find(x => x.id === sumulaMatchId);
-    if (m) m.mvp_jogador_id = jogadorId || null;
+    if (currentSumulaMatch) currentSumulaMatch.mvp_jogador_id = jogadorId || null;
+    const idx = matches.findIndex(x => x.id === sumulaMatchId);
+    if (idx >= 0) matches[idx].mvp_jogador_id = jogadorId || null;
     alert('MVP da partida salvo!');
   } catch (e) {
     alert('Erro ao salvar MVP: ' + e.message);
@@ -2132,7 +2178,7 @@ async function registrarSubstituicaoUI(equipeId) {
       minuto,
       descricao: `[SUB|saiu=${saiId}] Substituição: entrou ${nomeEntra} no lugar de ${nomeSai}${minuto ? ' aos ' + minuto + "'" : ''}.`,
     });
-    const m = matches.find(x => x.id === sumulaMatchId);
+    const m = currentSumulaMatch;
     const tA = teams.find(x => x.id === m?.equipe_a);
     const tB = teams.find(x => x.id === m?.equipe_b);
     await renderEscalacaoTimes(tA, tB);
@@ -2145,7 +2191,7 @@ async function removerSubstituicaoUI(eventoId) {
   if (!confirm('Remover esta substituição?')) return;
   try {
     await deleteEvento(eventoId);
-    const m = matches.find(x => x.id === sumulaMatchId);
+    const m = currentSumulaMatch;
     const tA = teams.find(x => x.id === m?.equipe_a);
     const tB = teams.find(x => x.id === m?.equipe_b);
     await renderEscalacaoTimes(tA, tB);
@@ -2158,7 +2204,7 @@ async function salvarEscalacaoCompleta() {
   const linhas = document.querySelectorAll('.jogador-escalacao-linha');
   if (!linhas.length) { alert('Nenhum jogador para salvar.'); return; }
 
-  const m = matches.find(x => x.id === sumulaMatchId);
+  const m = currentSumulaMatch;
 
   try {
     await Promise.all(Array.from(linhas).map(l => {
@@ -2233,3 +2279,234 @@ async function saveIdentidadeVisual() {
 const MODALIDADE_PADRAO_FALLBACK = { modalidade: 'campo', titulares: 11, reservas: 7 };
 
 document.addEventListener('DOMContentLoaded', initAdmin);
+
+// ---------------------------------------------------------------------
+// FASE ELIMINATÓRIA (MATA-MATA)
+// ---------------------------------------------------------------------
+
+async function initMataMataTab() {
+  const ouroContainer = document.getElementById('mata-mata-ouro-container');
+  const prataContainer = document.getElementById('mata-mata-prata-container');
+  const btnGerar = document.getElementById('btn-gerar-mata-mata');
+  const cardZerar = document.getElementById('card-zerar-mata-mata');
+  const msgIncompleta = document.getElementById('msg-fase-grupos-incompleta');
+
+  ouroContainer.innerHTML = '<p style="color:var(--text-muted);">Carregando...</p>';
+  prataContainer.innerHTML = '';
+
+  const partidasGrupos = await fetchMatches(adminCategoria);
+  const partidasElim = await fetchEliminatorias(adminCategoria);
+
+  // A fase de grupos está completa se todas as partidas (exceto byes) estão finalizadas?
+  const partidasReais = partidasGrupos.filter(m => !m.is_bye);
+  const gruposCompletos = partidasReais.length > 0 && partidasReais.every(m => m.status === 'FINISHED');
+  
+  if (!partidasElim.length) {
+    cardZerar.style.display = 'none';
+    ouroContainer.innerHTML = '';
+    prataContainer.innerHTML = '';
+    
+    if (!gruposCompletos) {
+      btnGerar.style.display = 'none';
+      msgIncompleta.style.display = 'block';
+    } else {
+      btnGerar.style.display = 'block';
+      msgIncompleta.style.display = 'none';
+    }
+  } else {
+    btnGerar.style.display = 'none';
+    msgIncompleta.style.display = 'none';
+    cardZerar.style.display = 'block';
+    renderMataMataUI(partidasElim);
+  }
+}
+
+async function gerarMataMataUI() {
+  if (!confirm('Gerar o chaveamento da Fase Eliminatória agora? Isso só deve ser feito após todas as partidas da fase de grupos estarem concluídas.')) return;
+
+  try {
+    const standings = await calcularClassificacaoAdmin();
+    await gerarBracketOuroPrata(adminCategoria, standings);
+    alert('Chaveamento gerado com sucesso!');
+    await initMataMataTab();
+  } catch (e) {
+    alert('Erro ao gerar chaveamento: ' + e.message);
+  }
+}
+
+async function zerarMataMataUI() {
+  if (!confirm('Tem certeza que deseja apagar TODO o mata-mata desta categoria? Essa ação não pode ser desfeita e apagará também os gols, cartões e escalações vinculados.')) return;
+  try {
+    await resetEliminatorias(adminCategoria);
+    alert('Chaveamento apagado com sucesso!');
+    await initMataMataTab();
+  } catch (e) {
+    alert('Erro ao zerar chaveamento: ' + e.message);
+  }
+}
+
+function renderMataMataUI(partidas) {
+  const ouroContainer = document.getElementById('mata-mata-ouro-container');
+  const prataContainer = document.getElementById('mata-mata-prata-container');
+
+  const renderCard = (m, titulo) => {
+    if (!m) return '';
+    const tA = teams.find(t => t.id === m.equipe_a);
+    const tB = teams.find(t => t.id === m.equipe_b);
+    
+    let placarStr = 'vs';
+    if (m.status === 'FINISHED' || m.placar_a != null) {
+      placarStr = `${m.placar_a ?? '-'} × ${m.placar_b ?? '-'}`;
+      if (m.placar_prorrogacao_a != null) placarStr += ` (PRO ${m.placar_prorrogacao_a}×${m.placar_prorrogacao_b})`;
+      if (m.placar_penaltis_a != null) placarStr += ` (PEN ${m.placar_penaltis_a}×${m.placar_penaltis_b})`;
+    }
+
+    let vantagemMsg = '';
+    if (m.vantagem_empate_equipe_id) {
+      const vTime = teams.find(t => t.id === m.vantagem_empate_equipe_id);
+      vantagemMsg = `<p style="font-size:0.65rem; color:var(--gold); margin-top:4px; text-align:center;">Empate favorece: ${vTime?.nome}</p>`;
+    }
+
+    return `
+      <div class="card" style="margin-bottom:8px; ${m.status === 'FINISHED' ? 'border-color:var(--gold);' : ''}">
+        <p style="font-size:0.7rem; color:var(--text-muted); margin-bottom:8px; text-transform:uppercase; text-align:center;">${titulo}</p>
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:12px;">
+          <span style="font-weight:700; font-size:0.85rem; flex:1; text-align:right;">${tA?.nome || 'A definir'}</span>
+          <span style="font-weight:800; color:var(--gold-bright); font-size:0.95rem; min-width:60px; text-align:center;">${placarStr}</span>
+          <span style="font-weight:700; font-size:0.85rem; flex:1;">${tB?.nome || 'A definir'}</span>
+        </div>
+        ${vantagemMsg}
+        <button class="btn-action" style="width:100%; margin-top:8px;" onclick="openSumulaAdmin('${m.id}')">Gerenciar Súmula</button>
+      </div>
+    `;
+  };
+
+  const ouroQF = partidas.filter(m => m.fase_eliminatoria === 'ouro' && m.etapa_eliminatoria === 'quartas').sort((a,b)=>a.posicao_eliminatoria-b.posicao_eliminatoria);
+  const ouroSF = partidas.filter(m => m.fase_eliminatoria === 'ouro' && m.etapa_eliminatoria === 'semi').sort((a,b)=>a.posicao_eliminatoria-b.posicao_eliminatoria);
+  const ouroF = partidas.find(m => m.fase_eliminatoria === 'ouro' && m.etapa_eliminatoria === 'final');
+
+  ouroContainer.innerHTML = `
+    <div class="card-title" style="margin-top:10px;">🏆 SUMED OURO</div>
+    <p style="font-size:0.75rem; color:var(--text-muted); margin-bottom:8px;">Quartas de Final</p>
+    ${ouroQF.map((m, i) => renderCard(m, `Quartas - Jogo ${i+1}`)).join('')}
+    <p style="font-size:0.75rem; color:var(--text-muted); margin-bottom:8px; margin-top:16px;">Semifinais</p>
+    ${ouroSF.map((m, i) => renderCard(m, `Semi - Jogo ${i+1}`)).join('')}
+    <p style="font-size:0.75rem; color:var(--text-muted); margin-bottom:8px; margin-top:16px;">Final</p>
+    ${renderCard(ouroF, 'Grande Final')}
+  `;
+
+  const prataRep = partidas.filter(m => m.fase_eliminatoria === 'prata' && m.etapa_eliminatoria === 'repescagem').sort((a,b)=>a.posicao_eliminatoria-b.posicao_eliminatoria);
+  const prataSF = partidas.filter(m => m.fase_eliminatoria === 'prata' && m.etapa_eliminatoria === 'semi').sort((a,b)=>a.posicao_eliminatoria-b.posicao_eliminatoria);
+  const prataF = partidas.find(m => m.fase_eliminatoria === 'prata' && m.etapa_eliminatoria === 'final');
+
+  prataContainer.innerHTML = `
+    <div class="card-title" style="margin-top:20px;">🥈 SUMED PRATA</div>
+    <p style="font-size:0.75rem; color:var(--text-muted); margin-bottom:8px;">Repescagem Inicial</p>
+    ${prataRep.map((m, i) => renderCard(m, `Repescagem - Jogo ${i+1}`)).join('')}
+    <p style="font-size:0.75rem; color:var(--text-muted); margin-bottom:8px; margin-top:16px;">Semifinais</p>
+    ${prataSF.map((m, i) => renderCard(m, `Semi - Jogo ${i+1}`)).join('')}
+    <p style="font-size:0.75rem; color:var(--text-muted); margin-bottom:8px; margin-top:16px;">Final</p>
+    ${renderCard(prataF, 'Final Prata')}
+  `;
+}
+
+async function salvarEliminatoriaUI(encerrar) {
+  if (!sumulaMatchId) return;
+  
+  const placar_a = document.getElementById('elim-placar-a').value;
+  const placar_b = document.getElementById('elim-placar-b').value;
+  const placar_prorrogacao_a = document.getElementById('elim-pro-a').value;
+  const placar_prorrogacao_b = document.getElementById('elim-pro-b').value;
+  const placar_penaltis_a = document.getElementById('elim-pen-a').value;
+  const placar_penaltis_b = document.getElementById('elim-pen-b').value;
+
+  try {
+    await salvarResultadoEliminatoria(sumulaMatchId, {
+      placar_a, placar_b,
+      placar_prorrogacao_a, placar_prorrogacao_b,
+      placar_penaltis_a, placar_penaltis_b,
+      encerrar
+    });
+    
+    if (encerrar) {
+      alert('Partida encerrada e chaveamento avançado!');
+      switchAdminScreen('mata-mata');
+    } else {
+      alert('Resultado parcial salvo!');
+      await openSumulaAdmin(sumulaMatchId);
+    }
+  } catch (e) {
+    alert('Erro ao salvar resultado: ' + e.message);
+  }
+}
+
+function voltarDaSumulaAdmin() {
+  const m = currentSumulaMatch;
+  if (m && m.fase_eliminatoria) {
+    switchAdminScreen('mata-mata');
+  } else {
+    switchAdminScreen('placar');
+  }
+}
+
+// Calcula a classificação idêntica ao index.js para gerar o bracket
+async function calcularClassificacaoAdmin() {
+  const partidasGrupos = await fetchMatches(adminCategoria);
+  const equipes = await fetchTeams(adminCategoria);
+  const eventos = await fetchEventosDaCategoria(adminCategoria);
+
+  const stats = {};
+  equipes.forEach(t => { stats[t.id] = { id: t.id, name: t.nome, P: 0, J: 0, V: 0, E: 0, D: 0, GP: 0, GC: 0, SG: 0, CV: 0, CA: 0 }; });
+
+  partidasGrupos.forEach(m => {
+    if (m.status === 'FINISHED' && m.placar_a !== null && m.placar_b !== null && !m.is_bye) {
+      const tA = stats[m.equipe_a], tB = stats[m.equipe_b];
+      if (tA && tB) {
+        tA.J++; tB.J++;
+        tA.GP += m.placar_a; tA.GC += m.placar_b;
+        tB.GP += m.placar_b; tB.GC += m.placar_a;
+        if (m.placar_a > m.placar_b) { tA.V++; tA.P += 3; tB.D++; }
+        else if (m.placar_b > m.placar_a) { tB.V++; tB.P += 3; tA.D++; }
+        else { tA.E++; tA.P += 1; tB.E++; tB.P += 1; }
+      }
+    }
+  });
+
+  (eventos || []).forEach(ev => {
+    const t = stats[ev.equipe_id];
+    if (!t) return;
+    if (ev.tipo === 'cartao_vermelho') t.CV++;
+    else if (ev.tipo === 'cartao_amarelo') t.CA++;
+  });
+
+  Object.values(stats).forEach(t => t.SG = t.GP - t.GC);
+
+  function confrontoDireto(idA, idB) {
+    let vA = 0, vB = 0, gA = 0, gB = 0;
+    partidasGrupos.forEach(m => {
+      if (m.is_bye || m.status !== 'FINISHED' || m.placar_a === null || m.placar_b === null) return;
+      if (m.equipe_a === idA && m.equipe_b === idB) {
+        gA += m.placar_a; gB += m.placar_b;
+        if (m.placar_a > m.placar_b) vA++; else if (m.placar_b > m.placar_a) vB++;
+      } else if (m.equipe_a === idB && m.equipe_b === idA) {
+        gB += m.placar_a; gA += m.placar_b;
+        if (m.placar_a > m.placar_b) vB++; else if (m.placar_b > m.placar_a) vA++;
+      }
+    });
+    if (vA !== vB) return vA - vB;
+    if (gA !== gB) return gA - gB;
+    return 0;
+  }
+
+  return Object.values(stats).sort((a, b) => {
+    if (b.P !== a.P) return b.P - a.P;
+    if (b.V !== a.V) return b.V - a.V;
+    if (b.GP !== a.GP) return b.GP - a.GP;
+    if (b.SG !== a.SG) return b.SG - a.SG;
+    const cd = confrontoDireto(a.id, b.id);
+    if (cd !== 0) return -cd;
+    if (a.CV !== b.CV) return a.CV - b.CV;
+    if (a.CA !== b.CA) return a.CA - b.CA;
+    return a.name.localeCompare(b.name);
+  });
+}

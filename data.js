@@ -161,7 +161,7 @@ async function deleteJogador(jogadorId) {
 // PARTIDAS
 // ---------------------------------------------------------------------
 async function fetchMatches(categoria) {
-  let query = sb.from('partidas').select('*');
+  let query = sb.from('partidas').select('*').is('fase_eliminatoria', null);
   if (categoria) query = query.eq('categoria', categoria);
   const { data, error } = await query;
   if (error) throw error;
@@ -261,7 +261,11 @@ async function salvarConfigSorteio(categoria, { folgaRodada1Id, paresRestritos }
 }
 
 async function zerarSorteio(categoria) {
-  const { error } = await sb.from('partidas').delete().eq('categoria', categoria);
+  const { error } = await sb
+    .from('partidas')
+    .delete()
+    .eq('categoria', categoria)
+    .is('fase_eliminatoria', null);
   if (error) throw error;
 }
 
@@ -270,7 +274,11 @@ async function zerarSorteio(categoria) {
 // várias vezes em memória (retries de restrição, animação do sorteio) antes
 // de decidir se ele vai ser realmente persistido.
 async function salvarCalendario(categoria, newMatches) {
-  const { error: deleteError } = await sb.from('partidas').delete().eq('categoria', categoria);
+  const { error: deleteError } = await sb
+    .from('partidas')
+    .delete()
+    .eq('categoria', categoria)
+    .is('fase_eliminatoria', null);
   if (deleteError) throw deleteError;
 
   const { error: insertError } = await sb.from('partidas').insert(newMatches);
@@ -690,7 +698,8 @@ async function fetchEventosDaCategoria(categoria) {
   const { data, error } = await sb
     .from('eventos_disciplinares')
     .select('jogador_id, equipe_id, tipo, partida_id, partidas!inner(categoria)')
-    .eq('partidas.categoria', categoria);
+    .eq('partidas.categoria', categoria)
+    .is('partidas.fase_eliminatoria', null); // <-- NOVO: ignora cartões do mata-mata
   if (error) throw error;
   return data;
 }
@@ -992,3 +1001,377 @@ async function fetchJogadorStats(jogadorId) {
     lesoes: eventos.filter(e => e.tipo === 'contusao').length,
   };
 }
+async function fetchEliminatorias(categoria) {
+  let query = sb.from('partidas').select('*').not('fase_eliminatoria', 'is', null);
+  if (categoria) query = query.eq('categoria', categoria);
+  const { data, error } = await query;
+  if (error) throw error;
+  return data;
+}
+
+// Resolve o vencedor de uma partida eliminatória considerando, em ordem:
+//   1) tempo normal (placar_a / placar_b)
+//   2) vantagem de empate (só QF Ouro 1ºx8º / 2ºx7º)
+//   3) prorrogação (placar_prorrogacao_a / _b)
+//   4) pênaltis (placar_penaltis_a / _b)
+// Retorna o id da equipe vencedora ou null se o resultado ainda não foi
+// completamente definido.
+function resolverVencedorEliminatoria(m) {
+  if (!m) return null;
+  const a = m.placar_a, b = m.placar_b;
+  if (a == null || b == null) return null;
+
+  if (a !== b) return a > b ? m.equipe_a : m.equipe_b;
+
+  // Empate no tempo normal → vantagem (só existe nas quartas do Ouro)
+  if (m.vantagem_empate_equipe_id) return m.vantagem_empate_equipe_id;
+
+  // Prorrogação
+  const pa = m.placar_prorrogacao_a, pb = m.placar_prorrogacao_b;
+  if (pa == null || pb == null) return null;
+  if (pa !== pb) return pa > pb ? m.equipe_a : m.equipe_b;
+
+  // Pênaltis (não podem empatar)
+  const ppa = m.placar_penaltis_a, ppb = m.placar_penaltis_b;
+  if (ppa == null || ppb == null) return null;
+  if (ppa === ppb) return null;
+  return ppa > ppb ? m.equipe_a : m.equipe_b;
+}
+
+// Gera o bracket completo (Ouro + Prata) a partir da classificação final
+// da fase de grupos. `standings` deve ser o array calculado por
+// calculateStandings() no index.js, já ordenado do 1º ao último.
+//
+// Regulamento aplicado:
+//   Ouro QF: 1º×8º (vantagem p/ 1º), 4º×5º, 2º×7º (vantagem p/ 2º), 3º×6º
+//   Ouro SF: vencedor(1×8) vs vencedor(4×5)  /  vencedor(2×7) vs vencedor(3×6)
+//   Prata Repescagem: 9º×12º e 10º×11º
+//   Prata SF (preenchidas depois): melhor eliminado QF-Ouro vs R1,
+//                                  2º melhor eliminado QF-Ouro vs R2
+//
+// As partidas de SF e Final são criadas JÁ com slots nulos (equipe_a=null,
+// equipe_b=null) e serão preenchidas por avancarBracket() conforme as
+// rodadas forem encerrando.
+async function gerarBracketOuroPrata(categoria, standings) {
+  const existing = await fetchEliminatorias(categoria);
+  if (existing.length) {
+    throw new Error('Já existe um mata-mata gerado para esta categoria. Zere o mata-mata antes de gerar novamente.');
+  }
+  if (!standings || standings.length < 12) {
+    throw new Error('É necessário ao menos 12 equipes classificadas (posições 1 a 12) para gerar o mata-mata.');
+  }
+
+  const seeds = standings.slice(0, 12); // 1º ao 12º
+  const idFor = (fase, etapa, pos) => `ko_${categoria}_${fase}_${etapa}_${pos}`;
+  const base = { categoria, rodada: 0, is_bye: false, status: 'SCHEDULED', local: 'Campo Principal' };
+  const newMatches = [];
+
+  // --- QUARTAS OURO ---
+  const qfDefs = [
+    { pos: 1, a: 1, b: 8, vantagem: 1 },
+    { pos: 2, a: 4, b: 5, vantagem: null },
+    { pos: 3, a: 2, b: 7, vantagem: 2 },
+    { pos: 4, a: 3, b: 6, vantagem: null },
+  ];
+  qfDefs.forEach(def => {
+    newMatches.push({
+      ...base,
+      id: idFor('ouro', 'quartas', def.pos),
+      fase_eliminatoria: 'ouro',
+      etapa_eliminatoria: 'quartas',
+      posicao_eliminatoria: def.pos,
+      equipe_a: seeds[def.a - 1].id,
+      equipe_b: seeds[def.b - 1].id,
+      seed_a: def.a,
+      seed_b: def.b,
+      vantagem_empate_equipe_id: def.vantagem ? seeds[def.vantagem - 1].id : null,
+    });
+  });
+
+  // --- SEMIS OURO (slots vazios) ---
+  [1, 2].forEach(pos => {
+    newMatches.push({
+      ...base,
+      id: idFor('ouro', 'semi', pos),
+      fase_eliminatoria: 'ouro',
+      etapa_eliminatoria: 'semi',
+      posicao_eliminatoria: pos,
+      equipe_a: null, equipe_b: null,
+      seed_a: null, seed_b: null,
+      vantagem_empate_equipe_id: null,
+    });
+  });
+
+  // --- FINAL OURO (slots vazios) ---
+  newMatches.push({
+    ...base,
+    id: idFor('ouro', 'final', 1),
+    fase_eliminatoria: 'ouro',
+    etapa_eliminatoria: 'final',
+    posicao_eliminatoria: 1,
+    equipe_a: null, equipe_b: null,
+    seed_a: null, seed_b: null,
+    vantagem_empate_equipe_id: null,
+  });
+
+  // --- REPESCAGEM PRATA ---
+  const repDefs = [
+    { pos: 1, a: 9, b: 12 },
+    { pos: 2, a: 10, b: 11 },
+  ];
+  repDefs.forEach(def => {
+    newMatches.push({
+      ...base,
+      id: idFor('prata', 'repescagem', def.pos),
+      fase_eliminatoria: 'prata',
+      etapa_eliminatoria: 'repescagem',
+      posicao_eliminatoria: def.pos,
+      equipe_a: seeds[def.a - 1].id,
+      equipe_b: seeds[def.b - 1].id,
+      seed_a: def.a,
+      seed_b: def.b,
+      vantagem_empate_equipe_id: null,
+    });
+  });
+
+  // --- SEMIS PRATA (slots vazios) ---
+  [1, 2].forEach(pos => {
+    newMatches.push({
+      ...base,
+      id: idFor('prata', 'semi', pos),
+      fase_eliminatoria: 'prata',
+      etapa_eliminatoria: 'semi',
+      posicao_eliminatoria: pos,
+      equipe_a: null, equipe_b: null,
+      seed_a: null, seed_b: null,
+      vantagem_empate_equipe_id: null,
+    });
+  });
+
+  // --- FINAL PRATA (slot vazio) ---
+  newMatches.push({
+    ...base,
+    id: idFor('prata', 'final', 1),
+    fase_eliminatoria: 'prata',
+    etapa_eliminatoria: 'final',
+    posicao_eliminatoria: 1,
+    equipe_a: null, equipe_b: null,
+    seed_a: null, seed_b: null,
+    vantagem_empate_equipe_id: null,
+  });
+
+  const { error } = await sb.from('partidas').insert(newMatches);
+  if (error) throw error;
+
+  return newMatches;
+}
+
+// Grava o resultado de uma partida eliminatória. Aceita qualquer combinação
+// de tempos normais / prorrogação / pênaltis. Se `encerrar` for true,
+// trava a partida (placar_travado) e exige que exista um vencedor definido.
+// Em seguida chama avancarBracket(), que propaga o novo vencedor (e, se o
+// vencedor mudou, reseta os slots/placares das fases seguintes).
+async function salvarResultadoEliminatoria(matchId, {
+  placar_a,
+  placar_b,
+  placar_prorrogacao_a,
+  placar_prorrogacao_b,
+  placar_penaltis_a,
+  placar_penaltis_b,
+  encerrar,
+} = {}) {
+  const { data: m, error: fetchErr } = await sb
+    .from('partidas')
+    .select('*')
+    .eq('id', matchId)
+    .single();
+  if (fetchErr) throw fetchErr;
+
+  const intOrNull = (v) => (v == null || v === '' ? null : Number(v));
+
+  const payload = {
+    placar_a: intOrNull(placar_a),
+    placar_b: intOrNull(placar_b),
+    placar_prorrogacao_a: intOrNull(placar_prorrogacao_a),
+    placar_prorrogacao_b: intOrNull(placar_prorrogacao_b),
+    placar_penaltis_a: intOrNull(placar_penaltis_a),
+    placar_penaltis_b: intOrNull(placar_penaltis_b),
+    teve_prorrogacao: intOrNull(placar_prorrogacao_a) != null || intOrNull(placar_prorrogacao_b) != null,
+    teve_penaltis: intOrNull(placar_penaltis_a) != null || intOrNull(placar_penaltis_b) != null,
+  };
+
+  const merged = { ...m, ...payload };
+  const vencedorId = resolverVencedorEliminatoria(merged);
+
+  if (encerrar) {
+    if (!vencedorId) {
+      throw new Error('Não é possível encerrar: o resultado ainda não define um vencedor (faltam placares, prorrogação ou pênaltis).');
+    }
+    payload.status = 'FINISHED';
+    payload.placar_travado = true;
+    payload.vencedor_id = vencedorId;
+  } else {
+    payload.status = vencedorId ? 'FINISHED' : 'SCHEDULED';
+    payload.vencedor_id = vencedorId;
+  }
+
+  const { error: updErr } = await sb.from('partidas').update(payload).eq('id', matchId);
+  if (updErr) throw updErr;
+
+  await avancarBracket(m.categoria);
+}
+
+async function resetEliminatorias(categoria) {
+  const { error } = await sb
+    .from('partidas')
+    .delete()
+    .eq('categoria', categoria)
+    .not('fase_eliminatoria', 'is', null);
+  if (error) throw error;
+}
+
+// Devolve o vencedor JÁ REGISTRADO de uma partida eliminatória finalizada
+// (vencedor_id). Retorna null se não encerrada.
+function vencedorEliminatoria(m) {
+  if (!m || m.status !== 'FINISHED') return null;
+  return m.vencedor_id || null;
+}
+
+// Atribui um time a um slot (equipe_a/equipe_b) de uma partida.
+// Se o time mudou, limpa tudo que era específico do confronto anterior
+// (placar, prorrogação, pênaltis, vencedor, status, mvp, travamento) —
+// assim, alterar um resultado anterior propaga a limpeza em cascata.
+// Grava o patch em `updates` e MUTA o objeto `match` para que chamadas
+// seguintes no mesmo array vejam o estado já atualizado.
+function assignSlotEliminatoria(match, slot, novoTimeId, updates) {
+  if (!match) return;
+  const atual = match[slot] ?? null;
+  const novo = novoTimeId ?? null;
+  if (atual === novo) return;
+
+  const patch = { [slot]: novo };
+  const tinhaDados =
+    match.status === 'FINISHED' ||
+    match.placar_a !== null ||
+    match.placar_b !== null ||
+    match.vencedor_id !== null;
+
+  if (tinhaDados) {
+    patch.placar_a = null;
+    patch.placar_b = null;
+    patch.placar_prorrogacao_a = null;
+    patch.placar_prorrogacao_b = null;
+    patch.placar_penaltis_a = null;
+    patch.placar_penaltis_b = null;
+    patch.teve_prorrogacao = false;
+    patch.teve_penaltis = false;
+    patch.vencedor_id = null;
+    patch.status = 'SCHEDULED';
+    patch.placar_travado = false;
+    patch.mvp_jogador_id = null;
+
+    // Reflete no cache local para que a próxima fase veja o reset.
+    match.status = 'SCHEDULED';
+    match.placar_a = null;
+    match.placar_b = null;
+    match.vencedor_id = null;
+    match.placar_travado = false;
+  }
+
+  updates.push({ id: match.id, patch });
+  match[slot] = novo;
+}
+
+// Reprocessa o bracket inteiro (Ouro + Prata) a partir dos resultados
+// atuais da fase de grupos eliminatória, propagando vencedores para as
+// próximas fases. É IDEMPOTENTE — chamar duas vezes seguidas não faz
+// nada na segunda vez. Se algum resultado anterior for alterado e isso
+// mudar quem avança, os slots e placares das fases seguintes são
+// automaticamente limpos (cascata de reset).
+async function avancarBracket(categoria) {
+  const matches = await fetchEliminatorias(categoria);
+  if (!matches.length) return 0;
+
+  const ouroQF = matches
+    .filter(m => m.fase_eliminatoria === 'ouro' && m.etapa_eliminatoria === 'quartas')
+    .sort((a, b) => a.posicao_eliminatoria - b.posicao_eliminatoria);
+  const ouroSF = matches
+    .filter(m => m.fase_eliminatoria === 'ouro' && m.etapa_eliminatoria === 'semi')
+    .sort((a, b) => a.posicao_eliminatoria - b.posicao_eliminatoria);
+  const ouroF = matches.find(m => m.fase_eliminatoria === 'ouro' && m.etapa_eliminatoria === 'final');
+
+  const prataR = matches
+    .filter(m => m.fase_eliminatoria === 'prata' && m.etapa_eliminatoria === 'repescagem')
+    .sort((a, b) => a.posicao_eliminatoria - b.posicao_eliminatoria);
+  const prataSF = matches
+    .filter(m => m.fase_eliminatoria === 'prata' && m.etapa_eliminatoria === 'semi')
+    .sort((a, b) => a.posicao_eliminatoria - b.posicao_eliminatoria);
+  const prataF = matches.find(m => m.fase_eliminatoria === 'prata' && m.etapa_eliminatoria === 'final');
+
+  const updates = [];
+
+  // QF Ouro → SF Ouro
+  //   Q1 → SF1.a | Q2 → SF1.b | Q3 → SF2.a | Q4 → SF2.b
+  if (ouroSF[0]) {
+    assignSlotEliminatoria(ouroSF[0], 'equipe_a', vencedorEliminatoria(ouroQF[0]), updates);
+    assignSlotEliminatoria(ouroSF[0], 'equipe_b', vencedorEliminatoria(ouroQF[1]), updates);
+  }
+  if (ouroSF[1]) {
+    assignSlotEliminatoria(ouroSF[1], 'equipe_a', vencedorEliminatoria(ouroQF[2]), updates);
+    assignSlotEliminatoria(ouroSF[1], 'equipe_b', vencedorEliminatoria(ouroQF[3]), updates);
+  }
+
+  // SF Ouro → Final Ouro
+  if (ouroF) {
+    assignSlotEliminatoria(ouroF, 'equipe_a', vencedorEliminatoria(ouroSF[0]), updates);
+    assignSlotEliminatoria(ouroF, 'equipe_b', vencedorEliminatoria(ouroSF[1]), updates);
+  }
+
+  // Repescagem Prata → SF Prata (slot B)
+  if (prataSF[0]) {
+    assignSlotEliminatoria(prataSF[0], 'equipe_b', vencedorEliminatoria(prataR[0]), updates);
+  }
+  if (prataSF[1]) {
+    assignSlotEliminatoria(prataSF[1], 'equipe_b', vencedorEliminatoria(prataR[1]), updates);
+  }
+
+  // Melhores eliminados das QF Ouro → SF Prata (slot A)
+  // Só preenche quando TODAS as 4 QFs do Ouro estiverem concluídas — antes
+  // disso o ranking dos "2 melhores eliminados" pode mudar.
+  const todasQFConcluidas =
+    ouroQF.length === 4 && ouroQF.every(m => vencedorEliminatoria(m));
+
+  if (todasQFConcluidas) {
+    const perdedores = ouroQF
+      .map(m => {
+        const v = vencedorEliminatoria(m);
+        if (!v) return null;
+        const perdedorId = m.equipe_a === v ? m.equipe_b : m.equipe_a;
+        const seed = m.equipe_a === perdedorId ? m.seed_a : m.seed_b;
+        return { equipeId: perdedorId, seed };
+      })
+      .filter(Boolean)
+      // menor seed = melhor posição na fase classificatória
+      .sort((a, b) => a.seed - b.seed);
+
+    if (prataSF[0]) assignSlotEliminatoria(prataSF[0], 'equipe_a', perdedores[0]?.equipeId || null, updates);
+    if (prataSF[1]) assignSlotEliminatoria(prataSF[1], 'equipe_a', perdedores[1]?.equipeId || null, updates);
+  } else {
+    if (prataSF[0]) assignSlotEliminatoria(prataSF[0], 'equipe_a', null, updates);
+    if (prataSF[1]) assignSlotEliminatoria(prataSF[1], 'equipe_a', null, updates);
+  }
+
+  // SF Prata → Final Prata
+  if (prataF) {
+    assignSlotEliminatoria(prataF, 'equipe_a', vencedorEliminatoria(prataSF[0]), updates);
+    assignSlotEliminatoria(prataF, 'equipe_b', vencedorEliminatoria(prataSF[1]), updates);
+  }
+
+  for (const u of updates) {
+    const { error } = await sb.from('partidas').update(u.patch).eq('id', u.id);
+    if (error) throw error;
+  }
+
+  return updates.length;
+}
+

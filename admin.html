@@ -98,7 +98,7 @@
       <div id="admin-calendario-completo"></div>
     </section>
 
-    <!-- PLACAR (lançar resultado + editar data/hora/local, unificado) -->
+    <!-- PLACAR -->
     <section id="screen-placar" class="screen active">
       <p class="section-label">Lançar Placar</p>
       <p class="section-sub">Resultado, data, horário e local — tudo em um só lugar.</p>
@@ -261,6 +261,14 @@
         <div class="quick-body"><div class="quick-title">Patrocinadores</div></div>
         <div class="quick-arrow">↗</div>
       </div>
+      
+      <!-- NOVO ITEM: FASE ELIMINATÓRIA -->
+      <div class="menu-list-item" onclick="switchAdminScreen('mata-mata')">
+        <div class="quick-icon">🏆</div>
+        <div class="quick-body"><div class="quick-title">Fase Eliminatória</div></div>
+        <div class="quick-arrow">↗</div>
+      </div>
+
       <div class="menu-list-item" id="menu-usuarios" style="display:none;" onclick="switchAdminScreen('usuarios')">
         <div class="quick-icon">👤</div>
         <div class="quick-body"><div class="quick-title">Usuários</div></div>
@@ -280,6 +288,37 @@
         <div class="quick-icon">⎋</div>
         <div class="quick-body"><div class="quick-title">Sair</div></div>
       </div>
+    </section>
+
+    <!-- FASE ELIMINATÓRIA -->
+    <section id="screen-mata-mata" class="screen">
+      <div style="display:flex; align-items:center; gap:10px; margin-bottom:14px;">
+        <button class="topbar-back" onclick="switchAdminScreen('mais')">←</button>
+        <span class="section-label" style="margin:0;">Fase Eliminatória</span>
+      </div>
+      <p class="section-sub">Gerenciamento do SUMED Ouro e SUMED Prata.</p>
+
+      <div class="card card-accent" id="card-gerar-mata-mata">
+        <div class="card-title">Geração do Chaveamento</div>
+        <p style="color:var(--text-muted); font-size:0.85rem; margin-bottom:12px;">
+          Gera automaticamente as Quartas, Semifinais e Finais da Copa Ouro e da Copa Prata a partir da classificação da fase de grupos.
+        </p>
+        <button class="btn-action" id="btn-gerar-mata-mata" onclick="gerarMataMataUI()" style="width:100%;">🏆 Gerar Chaveamento</button>
+        <div id="msg-fase-grupos-incompleta" style="display:none; color:var(--danger-strong); font-size:0.85rem; margin-top:10px; text-align:center;">
+          Faltam partidas para encerrar a fase de grupos.
+        </div>
+      </div>
+
+      <div class="card" id="card-zerar-mata-mata" style="display:none; border-color: var(--danger-strong);">
+        <div class="card-title" style="color: var(--danger-strong);">⚠️ Zona de Perigo</div>
+        <p style="color:var(--text-muted); font-size:0.85rem; margin-bottom:12px;">
+          Apaga TODAS as partidas do mata-mata desta categoria (incluindo placares, gols e cartões vinculados).
+        </p>
+        <button class="btn-secondary" style="width:100%; border-color:var(--danger-strong); color:var(--danger-strong);" onclick="zerarMataMataUI()">🗑️ Zerar Chaveamento</button>
+      </div>
+
+      <div id="mata-mata-ouro-container"></div>
+      <div id="mata-mata-prata-container"></div>
     </section>
 
     <!-- FORMATO DO CAMPEONATO -->
@@ -460,15 +499,48 @@
       </div>
     </section>
 
-
-    <!-- SÚMULA COMPLETA DE UMA PARTIDA -->
+    <!-- SÚMULA COMPLETA DE UMA PARTIDA (Grupos e Mata-Mata) -->
     <section id="screen-sumula-admin" class="screen">
       <div style="display:flex; align-items:center; gap:10px; margin-bottom:14px;">
-        <button class="topbar-back" onclick="switchAdminScreen('placar')">←</button>
+        <button class="topbar-back" onclick="voltarDaSumulaAdmin()">←</button>
         <span class="section-label" style="margin:0;" id="sumula-admin-title">Súmula</span>
       </div>
 
-      <div class="card" style="border-color: var(--gold);">
+      <!-- NOVO: Bloco de resultado exclusivo do Mata-Mata -->
+      <div class="card" id="card-resultado-elim" style="display:none; border-color: var(--gold);">
+        <div class="card-title">🏆 Resultado do Mata-Mata</div>
+        <div class="form-group">
+          <label>Tempo Normal</label>
+          <div style="display:flex; gap:8px; align-items:center;">
+            <input type="number" id="elim-placar-a" class="form-control" style="text-align:center;" placeholder="A">
+            <span style="color:var(--text-muted);">×</span>
+            <input type="number" id="elim-placar-b" class="form-control" style="text-align:center;" placeholder="B">
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Prorrogação (se houver)</label>
+          <div style="display:flex; gap:8px; align-items:center;">
+            <input type="number" id="elim-pro-a" class="form-control" style="text-align:center;" placeholder="A">
+            <span style="color:var(--text-muted);">×</span>
+            <input type="number" id="elim-pro-b" class="form-control" style="text-align:center;" placeholder="B">
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Pênaltis (se houver)</label>
+          <div style="display:flex; gap:8px; align-items:center;">
+            <input type="number" id="elim-pen-a" class="form-control" style="text-align:center;" placeholder="A">
+            <span style="color:var(--text-muted);">×</span>
+            <input type="number" id="elim-pen-b" class="form-control" style="text-align:center;" placeholder="B">
+          </div>
+        </div>
+        <div style="display:flex; gap:8px; margin-top:12px;">
+          <button class="btn-secondary" style="flex:1;" onclick="salvarEliminatoriaUI(false)">Salvar Parcial</button>
+          <button class="btn-action" style="flex:1;" onclick="salvarEliminatoriaUI(true)">🔒 Encerrar e Avançar</button>
+        </div>
+        <p id="elim-vencedor-msg" style="display:none; font-weight:700; color:var(--gold); text-align:center; margin-top:10px;"></p>
+      </div>
+
+      <div class="card" style="border-color: var(--gold);" id="card-gols-sumula">
         <div class="card-title">⚽ Gols & Assistências</div>
         <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
           <select id="gol-equipe" class="form-control" onchange="populateJogadoresDoSelect('gol-equipe','gol-jogador'); populateJogadoresDoSelect('gol-equipe','gol-assistencia')"></select>
@@ -524,8 +596,8 @@
         <button class="btn-secondary" style="width:100%;" onclick="salvarLinkTransmissaoUI()">Salvar Link</button>
       </div>
 
-      <div class="card">
-        <div class="card-title">Prorrogação & Pênaltis</div>
+      <div class="card" id="card-prorrogacao-penaltis" style="display:none;">
+        <div class="card-title">Prorrogação & Pênaltis (Gols)</div>
         <label style="display:flex; align-items:center; gap:8px; font-size:0.85rem; margin-bottom:10px;">
           <input type="checkbox" id="chk-prorrogacao" onchange="toggleFlagUI('teve_prorrogacao', this.checked)"> Partida teve prorrogação
         </label>
@@ -578,30 +650,23 @@
     </button>
   </nav>
 
-  <!-- OVERLAY: SORTEIO AO VIVO (tela cheia — pensada pra ser projetada/acompanhada por um público) -->
+  <!-- OVERLAY: SORTEIO AO VIVO -->
   <div id="sorteio-overlay" class="sorteio-overlay" style="display:none;">
     <button class="sorteio-overlay-close" onclick="fecharSorteioOverlayUI()" title="Fechar">✕</button>
-
     <div class="sorteio-overlay-header">🏆 SUMED 2026 — Sorteio da Rodada 1</div>
-
     <div class="sorteio-overlay-body">
       <div id="sorteio-overlay-etapa" class="sorteio-overlay-etapa">Jogo 1 · Time 1</div>
-
       <div class="sorteio-roleta-wrap">
         <div id="sorteio-roleta-shield" class="sorteio-roleta-shield">
           <span class="sorteio-shield-placeholder">?</span>
         </div>
       </div>
       <div id="sorteio-roleta-nome" class="sorteio-roleta-nome">&nbsp;</div>
-
       <button class="btn-action sorteio-btn-sortear" id="btn-sortear-proximo" onclick="sortearProximoUI()">🎲 Sortear</button>
       <button class="btn-secondary sorteio-btn-pular" id="btn-pular-animacao" onclick="pularAnimacaoSorteioUI()">⏭️ Pular animação</button>
-
       <div id="sorteio-folga-reveal" class="sorteio-folga-reveal" style="display:none;"></div>
-
       <button class="btn-action" id="btn-gerar-restante" style="display:none;" onclick="gerarRestanteRodadasUI()">✅ Gerar Rodadas 2 a 13 automaticamente</button>
     </div>
-
     <div class="sorteio-overlay-progresso">
       <div id="sorteio-progresso-lista" class="sorteio-progresso-lista"></div>
     </div>

@@ -29,6 +29,7 @@ let state = {
   teams: [],
   matches: [],
   eventos: [],
+  eliminatorias: [],
 };
 
 // ---------------------------------------------------------------------
@@ -209,11 +210,16 @@ async function setCategoria(categoria) {
 // CARGA DE DADOS
 // ---------------------------------------------------------------------
 async function loadData() {
-  [state.teams, state.matches, state.eventos] = await Promise.all([
+  const results = await Promise.all([
     fetchTeams(state.categoria),
     fetchMatches(state.categoria),
     fetchEventosDaCategoria(state.categoria),
+    fetchEliminatorias(state.categoria),
   ]);
+  state.teams = results[0];
+  state.matches = results[1];
+  state.eventos = results[2];
+  state.eliminatorias = results[3];
 }
 
 // Confronto direto (Art. 18º, item 4) só é "aplicável" de forma segura
@@ -564,12 +570,44 @@ function setFase(fase) {
   document.getElementById('fase-prata-content').style.display = fase === 'prata' ? 'block' : 'none';
 }
 
-function bracketCardHtml(idLabel, t1, t2) {
+function renderBracketMatch(m, label) {
+  if (!m) return '';
+  const teamA = state.teams.find(t => t.id === m.equipe_a);
+  const teamB = state.teams.find(t => t.id === m.equipe_b);
+  
+  let scoreA = m.placar_a != null ? String(m.placar_a) : '-';
+  let scoreB = m.placar_b != null ? String(m.placar_b) : '-';
+  
+  if (m.placar_prorrogacao_a != null && m.placar_prorrogacao_b != null) {
+    scoreA += ` (${m.placar_prorrogacao_a})`;
+    scoreB += ` (${m.placar_prorrogacao_b})`;
+  }
+  if (m.placar_penaltis_a != null && m.placar_penaltis_b != null) {
+    scoreA += ` [${m.placar_penaltis_a}]`;
+    scoreB += ` [${m.placar_penaltis_b}]`;
+  }
+  
+  const isWinnerA = m.vencedor_id && m.vencedor_id === m.equipe_a;
+  const isWinnerB = m.vencedor_id && m.vencedor_id === m.equipe_b;
+  
+  let vantagemMsg = '';
+  if (m.vantagem_empate_equipe_id) {
+    const vTeam = state.teams.find(t => t.id === m.vantagem_empate_equipe_id);
+    vantagemMsg = `<div style="font-size:0.6rem; color:var(--gold-bright); text-align:center; margin-top:4px;">Empate favorece: ${vTeam?.nome}</div>`;
+  }
+
   return `
-    <div class="bracket-card">
-      <div class="bracket-card-id">${idLabel}</div>
-      <div class="bracket-row"><span class="team-name">${t1 ? t1.name : 'A definir'}</span><span class="team-score">${t1 ? '-' : ''}</span></div>
-      <div class="bracket-row"><span class="team-name">${t2 ? t2.name : 'A definir'}</span><span class="team-score">${t2 ? '-' : ''}</span></div>
+    <div class="bracket-card" style="cursor:pointer;" onclick="openSumula('${m.id}')">
+      <div class="bracket-card-id">${label}</div>
+      <div class="bracket-row ${isWinnerA ? 'winner' : ''}">
+        <span class="team-name">${teamA?.nome || 'A definir'}</span>
+        <span class="team-score">${scoreA}</span>
+      </div>
+      <div class="bracket-row ${isWinnerB ? 'winner' : ''}">
+        <span class="team-name">${teamB?.nome || 'A definir'}</span>
+        <span class="team-score">${scoreB}</span>
+      </div>
+      ${vantagemMsg}
     </div>
   `;
 }
@@ -578,7 +616,9 @@ function renderChaves() {
   const qfContainer = document.getElementById('qf-matches');
   if (!qfContainer) return;
 
-  const completa = faseClassificatoriaCompleta();
+  const elimin = state.eliminatorias || [];
+  const completa = faseClassificatoriaCompleta() || elimin.length > 0;
+
   document.getElementById('chaves-aguardando').style.display = completa ? 'none' : 'block';
   document.getElementById('chaves-fase-toggle').style.display = completa ? 'flex' : 'none';
   document.getElementById('fase-ouro-content').style.display = completa && state.fase !== 'prata' ? 'block' : 'none';
@@ -591,25 +631,38 @@ function renderChaves() {
     return;
   }
 
-  const standings = calculateStandings();
-  const qfPairs = [
-    { id: 'Q1', t1: standings[0], t2: standings[7] },
-    { id: 'Q2', t1: standings[3], t2: standings[4] },
-    { id: 'Q3', t1: standings[1], t2: standings[6] },
-    { id: 'Q4', t1: standings[2], t2: standings[5] },
-  ];
-  qfContainer.innerHTML = qfPairs.map(p => bracketCardHtml(p.id, p.t1, p.t2)).join('');
+  if (elimin.length === 0) {
+    qfContainer.innerHTML = '<p style="color:var(--text-muted); text-align:center; padding:20px 0;">Fase de grupos concluída. Aguardando a organização liberar o chaveamento.</p>';
+    document.getElementById('sf-matches').innerHTML = '';
+    document.getElementById('prata-container').innerHTML = '<p style="color:var(--text-muted); text-align:center; padding:20px 0;">Aguardando chaveamento.</p>';
+    return;
+  }
 
-  document.getElementById('sf-matches').innerHTML = `
-    ${bracketCardHtml('S1', null, null)}
-    ${bracketCardHtml('S2', null, null)}
+  // --- OURO ---
+  const ouroQF = elimin.filter(m => m.fase_eliminatoria === 'ouro' && m.etapa_eliminatoria === 'quartas').sort((a,b)=>a.posicao_eliminatoria-b.posicao_eliminatoria);
+  const ouroSF = elimin.filter(m => m.fase_eliminatoria === 'ouro' && m.etapa_eliminatoria === 'semi').sort((a,b)=>a.posicao_eliminatoria-b.posicao_eliminatoria);
+  const ouroF = elimin.find(m => m.fase_eliminatoria === 'ouro' && m.etapa_eliminatoria === 'final');
+
+  qfContainer.innerHTML = ouroQF.map((m, i) => renderBracketMatch(m, `QF${i+1}`)).join('');
+  
+  document.getElementById('sf-matches').innerHTML = 
+    ouroSF.map((m, i) => renderBracketMatch(m, `SF${i+1}`)).join('') +
+    `<div class="bracket-stage-label" style="margin-top:18px;">Final</div>` +
+    renderBracketMatch(ouroF, 'Final');
+
+  // --- PRATA ---
+  const prataRep = elimin.filter(m => m.fase_eliminatoria === 'prata' && m.etapa_eliminatoria === 'repescagem').sort((a,b)=>a.posicao_eliminatoria-b.posicao_eliminatoria);
+  const prataSF = elimin.filter(m => m.fase_eliminatoria === 'prata' && m.etapa_eliminatoria === 'semi').sort((a,b)=>a.posicao_eliminatoria-b.posicao_eliminatoria);
+  const prataF = elimin.find(m => m.fase_eliminatoria === 'prata' && m.etapa_eliminatoria === 'final');
+
+  document.getElementById('prata-container').innerHTML = `
+    <div class="bracket-stage-label">Repescagem</div>
+    ${prataRep.map((m, i) => renderBracketMatch(m, `Rep${i+1}`)).join('')}
+    <div class="bracket-stage-label">Semifinais</div>
+    ${prataSF.map((m, i) => renderBracketMatch(m, `SF${i+1}`)).join('')}
+    <div class="bracket-stage-label">Final</div>
+    ${renderBracketMatch(prataF, 'Final')}
   `;
-
-  const prataContainer = document.getElementById('prata-container');
-  const prataTeams = standings.slice(8, 12);
-  prataContainer.innerHTML = prataTeams.length
-    ? `<div class="bracket-stage-label">Classificados</div>` + prataTeams.map((t, i) => bracketCardHtml('P' + (i + 1), t, null)).join('')
-    : '<p style="color:var(--text-muted); padding:20px 0; text-align:center;">Classificação ainda em andamento.</p>';
 }
 
 // ---------------------------------------------------------------------
@@ -903,7 +956,9 @@ function renderSelecaoRodada() {
 // (todas as rodadas já jogadas da categoria), do mais pro menos vezes.
 function calcularMvpsDoCampeonato() {
   const contagem = {};
-  state.matches.filter(m => !m.is_bye && m.mvp_jogador_id).forEach(m => {
+  const todasPartidas = [...state.matches, ...(state.eliminatorias || [])];
+  
+  todasPartidas.filter(m => !m.is_bye && m.mvp_jogador_id).forEach(m => {
     const id = m.mvp_jogador_id;
     if (!contagem[id]) {
       const jogador = resolverJogadorEEquipe(id);
@@ -930,15 +985,13 @@ async function openSelecaoCampeonato() {
 // SÚMULA / REGULAMENTO (modal)
 // ---------------------------------------------------------------------
 async function openSumula(matchId) {
-  const m = state.matches.find(x => x.id === matchId);
+  const m = state.matches.find(x => x.id === matchId) || (state.eliminatorias || []).find(x => x.id === matchId);
   if (!m) return;
 
-  const teamA = state.teams.find(t => t.id === m.equipe_a)?.nome;
-  const teamB = state.teams.find(t => t.id === m.equipe_b)?.nome;
+  const teamA = state.teams.find(t => t.id === m.equipe_a)?.nome || 'A definir';
+  const teamB = state.teams.find(t => t.id === m.equipe_b)?.nome || 'A definir';
   const extras = m.teve_prorrogacao ? ' <small style="color:var(--gold);">(após prorrogação)</small>' : '';
 
-  // MVP: busca o jogador em qualquer time da categoria (pode ser de A ou B),
-  // já resolvido a partir de state.teams — não precisa de fetch adicional.
   let mvpBloco = '';
   if (m.mvp_jogador_id) {
     let mvp = null;
@@ -1116,7 +1169,7 @@ function irParaEquipe(teamId) {
 }
 
 async function openEscalacoes(matchId) {
-  const m = state.matches.find(x => x.id === matchId);
+  const m = state.matches.find(x => x.id === matchId) || (state.eliminatorias || []).find(x => x.id === matchId);
   if (!m) return;
   const tA = state.teams.find(t => t.id === m.equipe_a);
   const tB = state.teams.find(t => t.id === m.equipe_b);
