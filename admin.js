@@ -2007,7 +2007,7 @@ async function renderEscalacaoTimes(tA, tB) {
   const container = document.getElementById('admin-escalacao-times');
   container.innerHTML = '<p style="color:var(--text-muted); font-size:0.85rem;">Carregando...</p>';
 
-  const m = matches.find(x => x.id === sumulaMatchId);
+  const m = currentSumulaMatch; // <-- Correção aqui
   const partidaConcluida = m?.status === 'FINISHED';
 
   let escalacaoAtual = [];
@@ -2030,13 +2030,8 @@ async function renderEscalacaoTimes(tA, tB) {
     const linhasJogadores = jogadores.map(j => {
       const atual = escalacaoDoTime.find(e => e.jogador_id === j.id);
       const ehTitular = !!atual?.titular;
-      // Trava a caixa de titular quando já tem 5 marcados e esta linha não é
-      // um deles — força o uso da substituição pra colocar mais alguém.
       const desabilitarTitular = !ehTitular && titularesCount >= MAX_TITULARES_EM_CAMPO;
       const emCampoAgora = emCampo.has(j.id);
-      // ehTitular reflete a escalação INICIAL fixa (quem começou o jogo),
-      // não quem está em campo agora — por isso o rótulo distingue os dois:
-      // titular que já saiu (banco) vs. não-titular que entrou (em campo).
       let tag = '';
       if (ehTitular && !emCampoAgora) {
         tag = ' <span style="color:var(--text-muted); font-size:0.7rem;">(saiu, no banco)</span>';
@@ -2091,9 +2086,6 @@ async function renderEscalacaoTimes(tA, tB) {
     `;
   };
 
-  // MVP da partida — qualquer participante (titular OU quem entrou por
-  // substituição) de QUALQUER um dos dois times pode ser escolhido. Não tem
-  // relação com a "Seleção da Rodada" — é só o destaque desse jogo específico.
   const participantesOptions = [tA, tB].filter(Boolean).flatMap(t => {
     const escalacaoDoTime = escalacaoAtual.filter(e => e.equipe_id === t.id);
     const participantes = calcularParticipantes(t.id, escalacaoDoTime, eventosDaPartida);

@@ -1061,17 +1061,17 @@ async function gerarBracketOuroPrata(categoria, standings) {
     throw new Error('É necessário ao menos 12 equipes classificadas (posições 1 a 12) para gerar o mata-mata.');
   }
 
-  const seeds = standings.slice(0, 12); // 1º ao 12º
+  const seeds = standings.slice(0, 12);
   const idFor = (fase, etapa, pos) => `ko_${categoria}_${fase}_${etapa}_${pos}`;
   const base = { categoria, rodada: 0, is_bye: false, status: 'SCHEDULED', local: 'Campo Principal' };
   const newMatches = [];
 
-  // --- QUARTAS OURO ---
+  // --- QUARTAS OURO (Ordem visual padrão: 1x8, 2x7, 3x6, 4x5) ---
   const qfDefs = [
     { pos: 1, a: 1, b: 8, vantagem: 1 },
-    { pos: 2, a: 4, b: 5, vantagem: null },
-    { pos: 3, a: 2, b: 7, vantagem: 2 },
-    { pos: 4, a: 3, b: 6, vantagem: null },
+    { pos: 2, a: 2, b: 7, vantagem: 2 },
+    { pos: 3, a: 3, b: 6, vantagem: null },
+    { pos: 4, a: 4, b: 5, vantagem: null },
   ];
   qfDefs.forEach(def => {
     newMatches.push({
@@ -1088,7 +1088,6 @@ async function gerarBracketOuroPrata(categoria, standings) {
     });
   });
 
-  // --- SEMIS OURO (slots vazios) ---
   [1, 2].forEach(pos => {
     newMatches.push({
       ...base,
@@ -1096,25 +1095,19 @@ async function gerarBracketOuroPrata(categoria, standings) {
       fase_eliminatoria: 'ouro',
       etapa_eliminatoria: 'semi',
       posicao_eliminatoria: pos,
-      equipe_a: null, equipe_b: null,
-      seed_a: null, seed_b: null,
-      vantagem_empate_equipe_id: null,
+      equipe_a: null, equipe_b: null, seed_a: null, seed_b: null, vantagem_empate_equipe_id: null,
     });
   });
 
-  // --- FINAL OURO (slots vazios) ---
   newMatches.push({
     ...base,
     id: idFor('ouro', 'final', 1),
     fase_eliminatoria: 'ouro',
     etapa_eliminatoria: 'final',
     posicao_eliminatoria: 1,
-    equipe_a: null, equipe_b: null,
-    seed_a: null, seed_b: null,
-    vantagem_empate_equipe_id: null,
+    equipe_a: null, equipe_b: null, seed_a: null, seed_b: null, vantagem_empate_equipe_id: null,
   });
 
-  // --- REPESCAGEM PRATA ---
   const repDefs = [
     { pos: 1, a: 9, b: 12 },
     { pos: 2, a: 10, b: 11 },
@@ -1134,7 +1127,6 @@ async function gerarBracketOuroPrata(categoria, standings) {
     });
   });
 
-  // --- SEMIS PRATA (slots vazios) ---
   [1, 2].forEach(pos => {
     newMatches.push({
       ...base,
@@ -1142,22 +1134,17 @@ async function gerarBracketOuroPrata(categoria, standings) {
       fase_eliminatoria: 'prata',
       etapa_eliminatoria: 'semi',
       posicao_eliminatoria: pos,
-      equipe_a: null, equipe_b: null,
-      seed_a: null, seed_b: null,
-      vantagem_empate_equipe_id: null,
+      equipe_a: null, equipe_b: null, seed_a: null, seed_b: null, vantagem_empate_equipe_id: null,
     });
   });
 
-  // --- FINAL PRATA (slot vazio) ---
   newMatches.push({
     ...base,
     id: idFor('prata', 'final', 1),
     fase_eliminatoria: 'prata',
     etapa_eliminatoria: 'final',
     posicao_eliminatoria: 1,
-    equipe_a: null, equipe_b: null,
-    seed_a: null, seed_b: null,
-    vantagem_empate_equipe_id: null,
+    equipe_a: null, equipe_b: null, seed_a: null, seed_b: null, vantagem_empate_equipe_id: null,
   });
 
   const { error } = await sb.from('partidas').insert(newMatches);
@@ -1310,15 +1297,34 @@ async function avancarBracket(categoria) {
 
   const updates = [];
 
-  // QF Ouro → SF Ouro
-  //   Q1 → SF1.a | Q2 → SF1.b | Q3 → SF2.a | Q4 → SF2.b
-  if (ouroSF[0]) {
-    assignSlotEliminatoria(ouroSF[0], 'equipe_a', vencedorEliminatoria(ouroQF[0]), updates);
-    assignSlotEliminatoria(ouroSF[0], 'equipe_b', vencedorEliminatoria(ouroQF[1]), updates);
-  }
-  if (ouroSF[1]) {
-    assignSlotEliminatoria(ouroSF[1], 'equipe_a', vencedorEliminatoria(ouroQF[2]), updates);
-    assignSlotEliminatoria(ouroSF[1], 'equipe_b', vencedorEliminatoria(ouroQF[3]), updates);
+  // --- OURO SEMIFINAIS ---
+  // Regra: melhor classificado pega o pior classificado.
+  const qfWinners = ouroQF.map(m => {
+    const v = vencedorEliminatoria(m);
+    if (!v) return null;
+    const seed = m.equipe_a === v ? m.seed_a : m.seed_b;
+    return { equipeId: v, seed: seed ?? 999 };
+  }).filter(Boolean);
+
+  if (qfWinners.length === 4) {
+    qfWinners.sort((a, b) => a.seed - b.seed);
+    if (ouroSF[0]) {
+      assignSlotEliminatoria(ouroSF[0], 'equipe_a', qfWinners[0].equipeId, updates); // Melhor seed
+      assignSlotEliminatoria(ouroSF[0], 'equipe_b', qfWinners[3].equipeId, updates); // Pior seed
+    }
+    if (ouroSF[1]) {
+      assignSlotEliminatoria(ouroSF[1], 'equipe_a', qfWinners[1].equipeId, updates); // 2º Melhor
+      assignSlotEliminatoria(ouroSF[1], 'equipe_b', qfWinners[2].equipeId, updates); // 3º Melhor
+    }
+  } else {
+    if (ouroSF[0]) {
+      assignSlotEliminatoria(ouroSF[0], 'equipe_a', null, updates);
+      assignSlotEliminatoria(ouroSF[0], 'equipe_b', null, updates);
+    }
+    if (ouroSF[1]) {
+      assignSlotEliminatoria(ouroSF[1], 'equipe_a', null, updates);
+      assignSlotEliminatoria(ouroSF[1], 'equipe_b', null, updates);
+    }
   }
 
   // SF Ouro → Final Ouro
@@ -1327,38 +1333,43 @@ async function avancarBracket(categoria) {
     assignSlotEliminatoria(ouroF, 'equipe_b', vencedorEliminatoria(ouroSF[1]), updates);
   }
 
-  // Repescagem Prata → SF Prata (slot B)
-  if (prataSF[0]) {
-    assignSlotEliminatoria(prataSF[0], 'equipe_b', vencedorEliminatoria(prataR[0]), updates);
-  }
-  if (prataSF[1]) {
-    assignSlotEliminatoria(prataSF[1], 'equipe_b', vencedorEliminatoria(prataR[1]), updates);
-  }
+  // --- PRATA SEMIFINAIS ---
+  const rWinners = prataR.map(m => {
+    const v = vencedorEliminatoria(m);
+    if (!v) return null;
+    const seed = m.equipe_a === v ? m.seed_a : m.seed_b;
+    return { equipeId: v, seed: seed ?? 999 };
+  }).filter(Boolean);
 
-  // Melhores eliminados das QF Ouro → SF Prata (slot A)
-  // Só preenche quando TODAS as 4 QFs do Ouro estiverem concluídas — antes
-  // disso o ranking dos "2 melhores eliminados" pode mudar.
-  const todasQFConcluidas =
-    ouroQF.length === 4 && ouroQF.every(m => vencedorEliminatoria(m));
+  const todasQFConcluidas = ouroQF.length === 4 && ouroQF.every(m => vencedorEliminatoria(m));
+  let melhoresEliminados = [];
 
   if (todasQFConcluidas) {
-    const perdedores = ouroQF
-      .map(m => {
-        const v = vencedorEliminatoria(m);
-        if (!v) return null;
-        const perdedorId = m.equipe_a === v ? m.equipe_b : m.equipe_a;
-        const seed = m.equipe_a === perdedorId ? m.seed_a : m.seed_b;
-        return { equipeId: perdedorId, seed };
-      })
-      .filter(Boolean)
-      // menor seed = melhor posição na fase classificatória
-      .sort((a, b) => a.seed - b.seed);
+    melhoresEliminados = ouroQF.map(m => {
+      const v = vencedorEliminatoria(m);
+      const perdedorId = m.equipe_a === v ? m.equipe_b : m.equipe_a;
+      const seed = m.equipe_a === perdedorId ? m.seed_a : m.seed_b;
+      return { equipeId: perdedorId, seed: seed ?? 999 };
+    }).sort((a, b) => a.seed - b.seed).slice(0, 2);
+  }
 
-    if (prataSF[0]) assignSlotEliminatoria(prataSF[0], 'equipe_a', perdedores[0]?.equipeId || null, updates);
-    if (prataSF[1]) assignSlotEliminatoria(prataSF[1], 'equipe_a', perdedores[1]?.equipeId || null, updates);
+  // Atribui melhores eliminados da Ouro (Slot A)
+  if (todasQFConcluidas) {
+    if (prataSF[0]) assignSlotEliminatoria(prataSF[0], 'equipe_a', melhoresEliminados[0]?.equipeId || null, updates);
+    if (prataSF[1]) assignSlotEliminatoria(prataSF[1], 'equipe_a', melhoresEliminados[1]?.equipeId || null, updates);
   } else {
     if (prataSF[0]) assignSlotEliminatoria(prataSF[0], 'equipe_a', null, updates);
     if (prataSF[1]) assignSlotEliminatoria(prataSF[1], 'equipe_a', null, updates);
+  }
+
+  // Atribui vencedores da Repescagem (Slot B) - Melhor pega pior
+  if (rWinners.length === 2) {
+    rWinners.sort((a, b) => a.seed - b.seed);
+    if (prataSF[0]) assignSlotEliminatoria(prataSF[0], 'equipe_b', rWinners[1].equipeId, updates); // Pior
+    if (prataSF[1]) assignSlotEliminatoria(prataSF[1], 'equipe_b', rWinners[0].equipeId, updates); // Melhor
+  } else {
+    if (prataSF[0]) assignSlotEliminatoria(prataSF[0], 'equipe_b', null, updates);
+    if (prataSF[1]) assignSlotEliminatoria(prataSF[1], 'equipe_b', null, updates);
   }
 
   // SF Prata → Final Prata
