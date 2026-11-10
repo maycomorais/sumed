@@ -195,11 +195,12 @@ function renderCategoriaToggles() {
 async function setCategoria(categoria) {
   if (state.categoria === categoria) return;
   state.categoria = categoria;
-  state.selectedRound = 1;
   state.heroRound = null;
   liveDismissed = false;
+  
   if (liveChannel) { sb.removeChannel(liveChannel); liveChannel = null; }
   if (liveEventsChannel) { sb.removeChannel(liveEventsChannel); liveEventsChannel = null; }
+  
   renderCategoriaToggles();
   await loadData();
   renderAll();
@@ -209,17 +210,36 @@ async function setCategoria(categoria) {
 // ---------------------------------------------------------------------
 // CARGA DE DADOS
 // ---------------------------------------------------------------------
+function calcularRodadaAtual() {
+  const partidasReais = state.matches.filter(m => !m.is_bye);
+  if (!partidasReais.length) return 1;
+  
+  // Acha a primeira rodada que ainda tem jogos agendados ou ao vivo
+  const pendentes = partidasReais.filter(m => m.status !== 'FINISHED');
+  if (pendentes.length) {
+    return Math.min(...pendentes.map(m => m.rodada));
+  }
+  
+  // Se todos os jogos já acabaram, fica na última rodada
+  return Math.max(...partidasReais.map(m => m.rodada));
+}
+
 async function loadData() {
-  const results = await Promise.all([
+  const [teams, matches, eventos, eliminatorias] = await Promise.all([
     fetchTeams(state.categoria),
     fetchMatches(state.categoria),
     fetchEventosDaCategoria(state.categoria),
     fetchEliminatorias(state.categoria),
   ]);
-  state.teams = results[0];
-  state.matches = results[1];
-  state.eventos = results[2];
-  state.eliminatorias = results[3];
+  state.teams = teams;
+  state.matches = matches;
+  state.eventos = eventos;
+  state.eliminatorias = eliminatorias;
+
+  // Define a rodada atual e sincroniza as telas
+  const rodadaAtual = calcularRodadaAtual();
+  state.selectedRound = rodadaAtual;
+  state.heroRound = rodadaAtual;
 }
 
 // Confronto direto (Art. 18º, item 4) só é "aplicável" de forma segura
@@ -301,12 +321,67 @@ async function renderHero() {
   const label = document.getElementById('proxima-rodada-label');
   if (!el) return;
 
-  // Na primeira renderização (ou troca de categoria), parte da rodada mais
-  // próxima que ainda tem jogo agendado/ao vivo; depois disso, respeita a
-  // navegação manual do usuário pelas setas ‹ ›.
+  const faseGruposCompleta = faseClassificatoriaCompleta();
+  
+  // --- MODO MATA-MATA (Se a fase de grupos acabou) ---
+  if (faseGruposCompleta && state.eliminatorias.length > 0) {
+    let jogosElim = state.eliminatorias.filter(m => m.status === 'SCHEDULED' || m.status === 'LIVE');
+    
+    // Se todos os jogos acabaram, mostra as finais ou as semis
+    if (!jogosElim.length) {
+      jogosElim = state.eliminatorias.filter(m => m.etapa_eliminatoria === 'final');
+    }
+    if (!jogosElim.length) {
+      jogosElim = state.eliminatorias.filter(m => m.etapa_eliminatoria === 'semi');
+    }
+
+    label.innerText = 'Fase Eliminatória';
+    
+    if (!jogosElim.length) {
+      el.innerHTML = `<div class="card card-accent hero-card"><p style="color:var(--text-muted); padding:20px 0; text-align:center;">Aguardando definição dos confrontos.</p></div>`;
+      return;
+    }
+
+    el.innerHTML = jogosElim.map(m => {
+      const teamA = state.teams.find(t => t.id === m.equipe_a);
+      const teamB = state.teams.find(t => t.id === m.equipe_b);
+      const aoVivo = m.status === 'LIVE';
+      
+      let placarStr = '';
+      if (m.status === 'FINISHED' || m.placar_a != null) {
+        placarStr = `${m.placar_a ?? 0} × ${m.placar_b ?? 0}`;
+        if (m.placar_penaltis_a != null) placarStr += ` (PEN ${m.placar_penaltis_a}×${m.placar_penaltis_b})`;
+      }
+
+      return `
+        <div class="card card-accent hero-card">
+          ${aoVivo ? `<div class="hero-live-tag"><span class="dot"></span> Ao Vivo</div>` : ''}
+          <div class="hero-vs">
+            <div class="hero-team">
+              <div class="hero-shield" style="cursor:pointer;" onclick="openTeamProfile('${teamA?.id}')">${teamA?.escudo_url ? `<img src="${teamA.escudo_url}" decoding="async" onerror="this.onerror=null; this.parentElement.innerHTML='⚽';">` : '⚽'}</div>
+              <div class="hero-team-name" style="cursor:pointer;" onclick="openTeamProfile('${teamA?.id}')">${teamA?.nome || 'A definir'}</div>
+            </div>
+            <div class="hero-team">
+              <div class="hero-shield" style="cursor:pointer;" onclick="openTeamProfile('${teamB?.id}')">${teamB?.escudo_url ? `<img src="${teamB.escudo_url}" decoding="async" onerror="this.onerror=null; this.parentElement.innerHTML='🏁';">` : '🏁'}</div>
+              <div class="hero-team-name" style="cursor:pointer;" onclick="openTeamProfile('${teamB?.id}')">${teamB?.nome || 'A definir'}</div>
+            </div>
+          </div>
+          <div class="hero-meta">${aoVivo || m.placar_a != null ? placarStr : (m.data ? formatDate(m.data) : 'Data a definir')}${m.hora ? ', ' + m.hora : ''}</div>
+          <span class="hero-tag">${m.etapa_eliminatoria.toUpperCase()} (${m.fase_eliminatoria.toUpperCase()})</span>
+          <div class="hero-location">📍 ${m.local || 'Campo Principal'}</div>
+          <div style="display:flex; gap:8px; margin-top:10px;">
+            <button class="btn-action" style="flex:1;" onclick="openSumula('${m.id}')">Detalhes</button>
+            <button class="btn-secondary" onclick="openEscalacoes('${m.id}')">👥</button>
+          </div>
+        </div>
+      `;
+    }).join('');
+    return;
+  }
+
+  // --- MODO FASE DE GRUPOS (Comportamento original) ---
   if (state.heroRound === null || state.heroRound === undefined) {
-    const rodadasComJogo = state.matches.filter(m => !m.is_bye && (m.status === 'SCHEDULED' || m.status === 'LIVE'));
-    state.heroRound = rodadasComJogo.length ? Math.min(...rodadasComJogo.map(m => m.rodada)) : 1;
+    state.heroRound = state.selectedRound || 1;
   }
 
   const jogosDaRodada = state.matches.filter(m => !m.is_bye && m.rodada === state.heroRound);
@@ -318,8 +393,6 @@ async function renderHero() {
     return;
   }
 
-  // Sem loading="lazy" nos escudos do hero de propósito: é a primeira coisa
-  // visível ao abrir o app (carrossel da Home), então lazy só atrasaria.
   el.innerHTML = jogosDaRodada.map(m => {
     const teamA = state.teams.find(t => t.id === m.equipe_a);
     const teamB = state.teams.find(t => t.id === m.equipe_b);
@@ -945,7 +1018,30 @@ function renderListaJogadoresMvp(jogadores, { comContador } = {}) {
 function renderSelecaoRodada() {
   const elSelecao = document.getElementById('selecao-rodada');
   if (!elSelecao) return;
+  
+  // O título "⭐ Seleção da Rodada" é o elemento anterior a div #selecao-rodada no HTML
+  const tituloEl = elSelecao.previousElementSibling;
 
+  const isEliminatoria = faseClassificatoriaCompleta() && state.eliminatorias.length > 0;
+  
+  // Se o mata-mata começou, e o usuário está na "última rodada" da fase de grupos
+  if (isEliminatoria && state.selectedRound === calcularRodadaAtual()) {
+    if (tituloEl) tituloEl.innerHTML = '⭐ Seleção da Fase Eliminatória';
+    
+    // Pega os MVPs dos jogos eliminatórios que já foram finalizados
+    const mvps = state.eliminatorias
+      .filter(m => m.status === 'FINISHED' && m.mvp_jogador_id)
+      .map(m => resolverJogadorEEquipe(m.mvp_jogador_id))
+      .filter(Boolean);
+    
+    elSelecao.innerHTML = mvps.length
+      ? renderListaJogadoresMvp(mvps)
+      : '<p style="color:var(--text-muted); font-size:0.85rem;">Nenhum MVP definido na fase eliminatória ainda.</p>';
+    return;
+  }
+
+  // Comportamento normal para a fase de grupos
+  if (tituloEl) tituloEl.innerHTML = '⭐ Seleção da Rodada';
   const jogadores = mvpsDaRodada(state.selectedRound);
   elSelecao.innerHTML = jogadores.length
     ? renderListaJogadoresMvp(jogadores)
